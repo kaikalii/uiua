@@ -1,0 +1,11 @@
+[package]
+name = 'uiua'
+version = '0.1.0'
+authors = ['Kai Schmidt <kaikaliischmidt@gmail.com>']
+edition = '2018'
+
+[dependencies]
+structopt = '0.3.20'
+itertools = '0.9.0'
+thiserror = '1.0.22'
+unicode_reader = '1.0.1'
