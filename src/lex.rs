@@ -198,20 +198,6 @@ where
                     TT::Nat(ok!(s.parse()))
                 }
             }
-            // Idents
-            c if ident_start_char(c) => {
-                let mut s: String = c.into();
-                while let Some(c) = chars.next() {
-                    let c = ok!(c);
-                    if ident_body_char(c) {
-                        s.push(c);
-                    } else {
-                        chars.put_back(Ok(c));
-                        break;
-                    }
-                }
-                TT::Ident(s)
-            }
             // Brackets
             '[' => {
                 brackets.push('[');
@@ -256,6 +242,20 @@ where
                 TT::CloseParen
             }
             c if c.is_whitespace() => continue,
+            // Idents
+            c if ident_char(c) => {
+                let mut s: String = c.into();
+                while let Some(c) = chars.next() {
+                    let c = ok!(c);
+                    if ident_char(c) {
+                        s.push(c);
+                    } else {
+                        chars.put_back(Ok(c));
+                        break;
+                    }
+                }
+                TT::Ident(s)
+            }
             c => return Err(LexErrorKind::InvalidCharacter(c).span(start, loc!())),
         };
         tokens.push(Token {
@@ -283,10 +283,6 @@ fn escaped_char(c: char) -> Result<char, LexErrorKind> {
     })
 }
 
-fn ident_start_char(c: char) -> bool {
-    c.is_alphabetic() || c == '_' || c as u32 > 127
-}
-
-fn ident_body_char(c: char) -> bool {
-    ident_start_char(c) || c.is_digit(10)
+fn ident_char(c: char) -> bool {
+    c > ' ' && c as u32 != 127
 }
