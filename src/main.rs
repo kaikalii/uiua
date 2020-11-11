@@ -43,11 +43,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Init codebase
     let cb_path = app.codebase.unwrap_or_else(|| PathBuf::from("."));
     let cb = CodeBase::open(cb_path)?;
-    cb.print_path();
+    cb.print_path_prompt();
     // Command loop
     for line in recv {
         if line.trim().is_empty() {
-            cb.print_path();
+            cb.print_path_prompt();
             continue;
         }
         let args = iter::once("uiua").chain(line.split_whitespace());
@@ -62,7 +62,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             },
             Err(e) => println!("{}", e),
         }
-        cb.print_path();
+        cb.print_path_prompt();
     }
     Ok(())
 }

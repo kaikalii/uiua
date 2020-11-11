@@ -6,6 +6,12 @@ pub enum Type {
     Struct(HashMap<String, Type>),
 }
 
+impl From<Primitive> for Type {
+    fn from(prim: Primitive) -> Self {
+        Type::Prim(prim)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Primitive<T = Type> {
     Bool,
@@ -17,29 +23,75 @@ pub enum Primitive<T = Type> {
     Op(Signature<T>),
 }
 
+impl<T> Primitive<T> {
+    pub fn list(inner: T) -> Self {
+        Primitive::List(Box::new(inner))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signature<T = Type> {
     pub before: Vec<T>,
     pub after: Vec<T>,
 }
 
+impl<T> Signature<T> {
+    pub fn new(before: Vec<T>, after: Vec<T>) -> Self {
+        Signature { before, after }
+    }
+}
+
 impl Signature {
     pub fn compose(&self, b: &Self) -> Result<Self, TypeError> {
         let a = self;
-        let mut a_after_iter = a.after.iter().rev();
-        let mut b_before_iter = b.before.iter().rev();
-        for (a_after, b_before) in a_after_iter.by_ref().zip(b_before_iter.by_ref()) {
-            if a_after != b_before {
-                return Err(TypeError::Mismatch {
-                    expected: b_before.clone(),
-                    found: a_after.clone(),
-                });
+        let mut i = 0;
+        loop {
+            if a.after.len() > i && b.before.len() > i {
+                let a_after = &a.after[a.after.len() - 1 - i];
+                let b_before = &b.before[b.before.len() - 1 - i];
+                if a_after != b_before {
+                    return Err(TypeError::Mismatch {
+                        expected: b_before.clone(),
+                        found: a_after.clone(),
+                    });
+                }
+            } else {
+                break;
             }
+            i += 1;
         }
-        let before = b_before_iter.rev().chain(&a.before).cloned().collect();
-        let after = a_after_iter.rev().chain(&b.after).cloned().collect();
-        Ok(Signature { before, after })
+        let before = b
+            .before
+            .iter()
+            .rev()
+            .skip(i)
+            .chain(&a.before)
+            .cloned()
+            .collect();
+        let after = a
+            .after
+            .iter()
+            .rev()
+            .skip(i)
+            .chain(&b.after)
+            .cloned()
+            .collect();
+        Ok(Signature::new(before, after))
     }
+}
+
+#[cfg(test)]
+#[test]
+fn sig_compose() {
+    use Primitive::*;
+    let a = Signature::new(vec![], vec![Bool.into()]);
+    let b = Signature::new(vec![], vec![Nat.into()]);
+    let c = Signature::new(vec![], vec![Bool.into(), Nat.into()]);
+    assert_eq!(a.compose(&b).unwrap(), c);
+    let a = Signature::new(vec![Nat.into()], vec![Float.into()]);
+    let b = Signature::new(vec![Float.into()], vec![Bool.into()]);
+    let c = Signature::new(vec![Nat.into()], vec![Bool.into()]);
+    assert_eq!(a.compose(&b).unwrap(), c);
 }
 
 #[derive(Debug, thiserror::Error)]

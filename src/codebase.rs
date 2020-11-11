@@ -43,7 +43,7 @@ impl CodeBase {
                         {
                             if !diff.starts_with(".git") {
                                 println!("\n{} {}", e, diff.to_string_lossy());
-                                cb.print_path();
+                                cb.print_path_prompt();
                             }
                         }
                     }
@@ -55,6 +55,7 @@ impl CodeBase {
     fn handle_file_change(&self, path: &Path) -> Result<(), Box<dyn Error>> {
         for item in parse::parse(fs::File::open(path)?)? {
             println!("{:#?}", item);
+            self.print_path_prompt();
         }
         Ok(())
     }
@@ -65,7 +66,7 @@ impl CodeBase {
             .iter()
             .fold((*self.top_dir).clone(), |acc, path| acc.join(path))
     }
-    pub fn print_path(&self) {
+    pub fn print_path_prompt(&self) {
         print!(".");
         for (i, path) in self.path.lock().unwrap().iter().enumerate() {
             print!("{}{}", if i == 0 { "" } else { "." }, path);
