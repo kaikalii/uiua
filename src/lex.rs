@@ -4,24 +4,65 @@ use std::{
     io::{self, Read},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TT {
     Ident(String),
     String(String),
-    Float(f64),
-    Int(i64),
-    Nat(i64),
-    Char(char),
     Bool(bool),
+    NatOrInt(u64),
+    Int(i64),
+    Float(f64),
+    Char(char),
     OpenBracket,
     CloseBracket,
     OpenCurly,
     CloseCurly,
     OpenParen,
     CloseParen,
+    DoubleDash,
+    Colon,
 }
 
-#[derive(Debug, Clone)]
+impl TT {
+    pub fn string(self) -> Option<String> {
+        if let TT::String(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+    pub fn ident(self) -> Option<String> {
+        if let TT::Ident(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+}
+
+impl fmt::Display for TT {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TT::Ident(s) => s.fmt(f),
+            TT::String(s) => write!(f, "{:?}", s),
+            TT::Bool(b) => b.fmt(f),
+            TT::NatOrInt(n) => n.fmt(f),
+            TT::Int(n) => n.fmt(f),
+            TT::Float(n) => n.fmt(f),
+            TT::Char(c) => c.fmt(f),
+            TT::OpenBracket => "[".fmt(f),
+            TT::CloseBracket => "]".fmt(f),
+            TT::OpenCurly => "{".fmt(f),
+            TT::CloseCurly => "}".fmt(f),
+            TT::OpenParen => "(".fmt(f),
+            TT::CloseParen => ")".fmt(f),
+            TT::DoubleDash => "--".fmt(f),
+            TT::Colon => ":".fmt(f),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Loc {
     pub line: usize,
     pub col: usize,
@@ -122,7 +163,7 @@ where
         let start = loc!();
         macro_rules! ok {
             ($res:expr) => {
-                $res.map_err(|e| LexErrorKind::from(e).span(start.clone(), loc!()))?
+                $res.map_err(|e| LexErrorKind::from(e).span(start, loc!()))?
             };
         }
         let tt = match ok!(c) {
@@ -157,15 +198,15 @@ where
             c if c == '\'' => {
                 let mut c = ok!(chars
                     .next()
-                    .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start.clone(), loc!()))?);
+                    .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start, loc!()))?);
                 if c == '\\' {
                     c = ok!(escaped_char(ok!(chars.next().ok_or_else(|| {
-                        LexErrorKind::ExpectedCharacter.span(start.clone(), loc!())
+                        LexErrorKind::ExpectedCharacter.span(start, loc!())
                     })?)));
                 };
                 let next = ok!(chars
                     .next()
-                    .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start.clone(), loc!()))?);
+                    .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start, loc!()))?);
                 if next != '\'' {
                     return Err(LexErrorKind::Expected {
                         expected: '\'',
@@ -175,28 +216,43 @@ where
                 }
                 TT::Char(c)
             }
-            // Num literals
+            // Num literals or double dash
             c if c.is_digit(10) || c == '-' => {
-                let mut s: String = c.into();
-                let mut period = false;
-                while let Some(c) = chars.next() {
-                    let c = ok!(c);
-                    if c.is_digit(10) || c == '.' && !period {
-                        if c == '.' {
-                            period = true;
-                        }
-                        s.push(c);
+                let mut double_dash = false;
+                if c == '-' {
+                    let next = ok!(chars
+                        .next()
+                        .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start, loc!()))?);
+                    if next == '-' {
+                        double_dash = true;
                     } else {
                         chars.put_back(Ok(c));
-                        break;
                     }
                 }
-                if period {
-                    TT::Float(ok!(s.parse()))
-                } else if s.starts_with('-') {
-                    TT::Int(ok!(s.parse()))
+                if double_dash {
+                    TT::DoubleDash
                 } else {
-                    TT::Nat(ok!(s.parse()))
+                    let mut s: String = c.into();
+                    let mut period = false;
+                    while let Some(c) = chars.next() {
+                        let c = ok!(c);
+                        if c.is_digit(10) || c == '.' && !period {
+                            if c == '.' {
+                                period = true;
+                            }
+                            s.push(c);
+                        } else {
+                            chars.put_back(Ok(c));
+                            break;
+                        }
+                    }
+                    if period {
+                        TT::Float(ok!(s.parse()))
+                    } else if s.starts_with('-') {
+                        TT::Int(ok!(s.parse()))
+                    } else {
+                        TT::NatOrInt(ok!(s.parse()))
+                    }
                 }
             }
             // Brackets
@@ -243,7 +299,7 @@ where
                 TT::CloseParen
             }
             c if c.is_whitespace() => continue,
-            // Idents
+            // Idents and others
             c if ident_char(c) => {
                 let mut s: String = c.into();
                 while let Some(c) = chars.next() {
@@ -256,6 +312,7 @@ where
                     }
                 }
                 match s.as_str() {
+                    ":" => TT::Colon,
                     "true" => TT::Bool(true),
                     "false" => TT::Bool(false),
                     _ => TT::Ident(s),
