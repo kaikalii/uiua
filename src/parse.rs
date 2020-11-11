@@ -42,7 +42,8 @@ impl From<LexError> for ParseError {
 
 struct Parser {
     tokens: std::vec::IntoIter<Token>,
-    nodes: Vec<UnresolvedNode>,
+    put_back: Option<Token>,
+    defs: Vec<UnresolvedDef>,
 }
 
 impl Parser {
@@ -55,29 +56,19 @@ impl Parser {
     where
         F: Fn(TT) -> Option<R>,
     {
-        self.try_mat(expected, f)?
-            .ok_or_else(|| ParseErrorKind::Expected(expected).span(start, start))
-    }
-    fn try_mat<F, R>(
-        &mut self,
-        expected: &'static str,
-        f: F,
-    ) -> Result<Option<Spanned<R>>, ParseError>
-    where
-        F: Fn(TT) -> Option<R>,
-    {
-        let token = if let Some(token) = self.tokens.next() {
+        let token = if let Some(token) = self.put_back.take().or_else(|| self.tokens.next()) {
             token
         } else {
-            return Ok(None);
+            return Err(ParseErrorKind::Expected(expected).span(start, start));
         };
         if let Some(res) = f(token.tt.clone()) {
-            Ok(Some(Spanned {
+            Ok(Spanned {
                 data: res,
                 start: token.start,
                 end: token.end,
-            }))
+            })
         } else {
+            self.put_back = Some(token.clone());
             Err(ParseErrorKind::ExpectedFound {
                 expected,
                 found: token.tt,
@@ -85,27 +76,61 @@ impl Parser {
             .span(token.start, token.end))
         }
     }
-    fn def(&mut self) -> Result<bool, ParseError> {
-        if let Some(sp) = self.try_mat(":", |tt| bool_op(tt == TT::Colon))? {
-            let name = self.mat("identifier", sp.end, TT::ident)?;
-            Ok(true)
-        } else {
-            Ok(false)
+    fn try_mat<F, R>(
+        &mut self,
+        expected: &'static str,
+        start: Loc,
+        f: F,
+    ) -> Result<Option<Spanned<R>>, ParseError>
+    where
+        F: Fn(TT) -> Option<R>,
+    {
+        match self.mat(expected, start, f) {
+            Ok(sp) => Ok(Some(sp)),
+            Err(ParseError {
+                kind: ParseErrorKind::ExpectedFound { .. },
+                ..
+            }) => Ok(None),
+            Err(e) => Err(e),
         }
+    }
+    fn def(&mut self, start: Loc) -> Result<Loc, ParseError> {
+        let colon = self.mat(":", start, |tt| bool_op(tt == TT::Colon))?;
+        let name = self.mat("identifier", colon.end, TT::ident)?;
+        let mut nodes = Vec::new();
+        let mut end = name.end;
+        loop {
+            if let Some(node) = self.try_mat("term", end, TT::node)? {
+                end = node.end;
+                nodes.push(node.data);
+            } else {
+                end = self.mat(";", end, |tt| bool_op(tt == TT::SemiColon))?.end;
+                break;
+            }
+        }
+        self.defs.push(UnresolvedDef {
+            name: name.data,
+            nodes,
+        });
+        Ok(end)
     }
 }
 
-pub fn parse<R>(input: R) -> Result<Vec<UnresolvedNode>, ParseError>
+pub fn parse<R>(input: R) -> Result<Vec<UnresolvedDef>, ParseError>
 where
     R: Read,
 {
     let tokens = lex(input)?;
     let mut parser = Parser {
         tokens: tokens.into_iter(),
-        nodes: Vec::new(),
+        put_back: None,
+        defs: Vec::new(),
     };
-    while parser.def()? {}
-    Ok(parser.nodes)
+    let mut end = Loc::new(1, 1);
+    while !parser.tokens.as_slice().is_empty() {
+        end = parser.def(end)?;
+    }
+    Ok(parser.defs)
 }
 
 struct Spanned<T> {

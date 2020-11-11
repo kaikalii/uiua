@@ -27,6 +27,12 @@ pub enum Node {
 }
 
 #[derive(Debug, Clone)]
+pub struct UnresolvedDef {
+    pub name: String,
+    pub nodes: Vec<UnresolvedNode>,
+}
+
+#[derive(Debug, Clone)]
 pub enum UnresolvedNode {
     Ident(String),
     Defered(Vec<UnresolvedNode>),

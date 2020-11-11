@@ -4,6 +4,8 @@ use std::{
     io::{self, Read},
 };
 
+use crate::ast::*;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TT {
     Ident(String),
@@ -21,6 +23,7 @@ pub enum TT {
     CloseParen,
     DoubleDash,
     Colon,
+    SemiColon,
 }
 
 impl TT {
@@ -37,6 +40,18 @@ impl TT {
         } else {
             None
         }
+    }
+    pub fn node(self) -> Option<UnresolvedNode> {
+        Some(match self {
+            TT::Ident(s) => UnresolvedNode::Ident(s),
+            TT::String(s) => UnresolvedNode::Literal(Literal::String(s)),
+            TT::Bool(b) => UnresolvedNode::Literal(Literal::Bool(b)),
+            TT::NatOrInt(n) => UnresolvedNode::Literal(Literal::NatOrInt(n)),
+            TT::Int(n) => UnresolvedNode::Literal(Literal::Int(n)),
+            TT::Float(n) => UnresolvedNode::Literal(Literal::Float(n)),
+            TT::Char(c) => UnresolvedNode::Literal(Literal::Char(c)),
+            _ => return None,
+        })
     }
 }
 
@@ -58,6 +73,7 @@ impl fmt::Display for TT {
             TT::CloseParen => ")".fmt(f),
             TT::DoubleDash => "--".fmt(f),
             TT::Colon => ":".fmt(f),
+            TT::SemiColon => ";".fmt(f),
         }
     }
 }
@@ -66,6 +82,12 @@ impl fmt::Display for TT {
 pub struct Loc {
     pub line: usize,
     pub col: usize,
+}
+
+impl Loc {
+    pub fn new(line: usize, col: usize) -> Loc {
+        Loc { line, col }
+    }
 }
 
 impl fmt::Display for Loc {
@@ -153,10 +175,7 @@ where
     let mut brackets = Vec::new();
     macro_rules! loc {
         () => {
-            Loc {
-                line: line.get(),
-                col: col.get(),
-            }
+            Loc::new(line.get(), col.get())
         };
     }
     while let Some(c) = chars.next() {
@@ -226,7 +245,7 @@ where
                     if next == '-' {
                         double_dash = true;
                     } else {
-                        chars.put_back(Ok(c));
+                        chars.put_back(Ok(next));
                     }
                 }
                 if double_dash {
@@ -298,6 +317,8 @@ where
                 };
                 TT::CloseParen
             }
+            ':' => TT::Colon,
+            ';' => TT::SemiColon,
             c if c.is_whitespace() => continue,
             // Idents and others
             c if ident_char(c) => {
@@ -312,7 +333,6 @@ where
                     }
                 }
                 match s.as_str() {
-                    ":" => TT::Colon,
                     "true" => TT::Bool(true),
                     "false" => TT::Bool(false),
                     _ => TT::Ident(s),
@@ -320,13 +340,11 @@ where
             }
             c => return Err(LexErrorKind::InvalidCharacter(c).span(start, loc!())),
         };
+        println!("{}", tt);
         tokens.push(Token {
             tt,
             start,
-            end: Loc {
-                line: line.get(),
-                col: col.get(),
-            },
+            end: Loc::new(line.get(), col.get()),
         });
     }
     if let Some(brack) = brackets.pop() {
