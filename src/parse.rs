@@ -137,6 +137,22 @@ impl Parser {
             None
         })
     }
+    // Match a sequence of terms
+    fn seq(&mut self) -> Result<Vec<UnresolvedNode>, ParseError> {
+        let mut nodes = Vec::new();
+        loop {
+            if let Some(node) = self.try_mat("term", TT::node)? {
+                nodes.push(node.data);
+            } else if self.try_mat("[", TT::OpenBracket)?.is_some() {
+                let sub_nodes = self.seq()?;
+                nodes.push(UnresolvedNode::Defered(sub_nodes));
+                self.mat("]", TT::CloseBracket)?;
+            } else {
+                break;
+            }
+        }
+        Ok(nodes)
+    }
     // Match a definition
     fn def(&mut self) -> Result<(), ParseError> {
         // Match the colon and name
@@ -145,15 +161,7 @@ impl Parser {
         // Match an optional type signature
         let sig = self.sig()?;
         // Match the nodes
-        let mut nodes = Vec::new();
-        loop {
-            if let Some(node) = self.try_mat("term", TT::node)? {
-                nodes.push(node.data);
-            } else {
-                self.mat(";", TT::SemiColon)?;
-                break;
-            }
-        }
+        let nodes = self.seq()?;
         self.defs.push(UnresolvedDef {
             name: name.data,
             sig,
