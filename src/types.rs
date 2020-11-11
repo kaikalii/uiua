@@ -7,23 +7,23 @@ pub enum Type {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Primitive {
+pub enum Primitive<T = Type> {
     Bool,
     Nat,
     Int,
     Float,
     String,
-    List(Box<Type>),
-    Op(Operation),
+    List(Box<T>),
+    Op(Signature),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Operation {
-    pub before: Vec<Type>,
-    pub after: Vec<Type>,
+pub struct Signature<T = Type> {
+    pub before: Vec<T>,
+    pub after: Vec<T>,
 }
 
-impl Operation {
+impl Signature {
     pub fn compose(&self, b: &Self) -> Result<Self, TypeError> {
         let a = self;
         let mut a_after_iter = a.after.iter().rev();
@@ -38,7 +38,7 @@ impl Operation {
         }
         let before = b_before_iter.rev().chain(&a.before).cloned().collect();
         let after = a_after_iter.rev().chain(&b.after).cloned().collect();
-        Ok(Operation { before, after })
+        Ok(Signature { before, after })
     }
 }
 
@@ -46,4 +46,10 @@ impl Operation {
 pub enum TypeError {
     #[error("Expected {expected:?} found {found:?}")]
     Mismatch { expected: Type, found: Type },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnresolvedType {
+    Prim(Primitive<Self>),
+    Other(String),
 }

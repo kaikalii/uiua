@@ -2,7 +2,7 @@ use std::mem;
 
 use sha3::*;
 
-use crate::types::Type;
+use crate::types::*;
 
 pub type Hash =
     digest::generic_array::GenericArray<u8, digest::generic_array::typenum::consts::U32>;
@@ -23,12 +23,13 @@ pub enum Node {
     Int(i64),
     Float(f64),
     Char(char),
-    String(String),
+    Text(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct UnresolvedDef {
     pub name: String,
+    pub sig: Option<Signature<UnresolvedType>>,
     pub nodes: Vec<UnresolvedNode>,
 }
 
@@ -66,7 +67,7 @@ pub enum Literal {
     Int(i64),
     Float(f64),
     Char(char),
-    String(String),
+    Text(String),
 }
 
 impl Literal {
@@ -78,7 +79,7 @@ impl Literal {
             Literal::Int(n) => sha.update(&unsafe { mem::transmute::<_, [u8; 8]>(*n) }),
             Literal::Float(n) => sha.update(&unsafe { mem::transmute::<_, [u8; 8]>(*n) }),
             Literal::Char(c) => sha.update(&unsafe { mem::transmute::<_, [u8; 4]>(*c) }),
-            Literal::String(s) => sha.update(s),
+            Literal::Text(s) => sha.update(s),
         }
     }
 }

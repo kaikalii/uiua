@@ -9,7 +9,7 @@ use crate::ast::*;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TT {
     Ident(String),
-    String(String),
+    Text(String),
     Bool(bool),
     NatOrInt(u64),
     Int(i64),
@@ -24,11 +24,12 @@ pub enum TT {
     DoubleDash,
     Colon,
     SemiColon,
+    Tilde,
 }
 
 impl TT {
-    pub fn string(self) -> Option<String> {
-        if let TT::String(s) = self {
+    pub fn text(self) -> Option<String> {
+        if let TT::Text(s) = self {
             Some(s)
         } else {
             None
@@ -44,7 +45,7 @@ impl TT {
     pub fn node(self) -> Option<UnresolvedNode> {
         Some(match self {
             TT::Ident(s) => UnresolvedNode::Ident(s),
-            TT::String(s) => UnresolvedNode::Literal(Literal::String(s)),
+            TT::Text(s) => UnresolvedNode::Literal(Literal::Text(s)),
             TT::Bool(b) => UnresolvedNode::Literal(Literal::Bool(b)),
             TT::NatOrInt(n) => UnresolvedNode::Literal(Literal::NatOrInt(n)),
             TT::Int(n) => UnresolvedNode::Literal(Literal::Int(n)),
@@ -59,7 +60,7 @@ impl fmt::Display for TT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             TT::Ident(s) => s.fmt(f),
-            TT::String(s) => write!(f, "{:?}", s),
+            TT::Text(s) => write!(f, "{:?}", s),
             TT::Bool(b) => b.fmt(f),
             TT::NatOrInt(n) => n.fmt(f),
             TT::Int(n) => n.fmt(f),
@@ -74,6 +75,7 @@ impl fmt::Display for TT {
             TT::DoubleDash => "--".fmt(f),
             TT::Colon => ":".fmt(f),
             TT::SemiColon => ";".fmt(f),
+            TT::Tilde => "~".fmt(f),
         }
     }
 }
@@ -211,7 +213,7 @@ where
                     }
                     .span(start, loc!()));
                 }
-                TT::String(s)
+                TT::Text(s)
             }
             // Character literals
             c if c == '\'' => {
@@ -319,6 +321,7 @@ where
             }
             ':' => TT::Colon,
             ';' => TT::SemiColon,
+            '~' => TT::SemiColon,
             c if c.is_whitespace() => continue,
             // Idents and others
             c if ident_char(c) => {
@@ -340,7 +343,6 @@ where
             }
             c => return Err(LexErrorKind::InvalidCharacter(c).span(start, loc!())),
         };
-        println!("{}", tt);
         tokens.push(Token {
             tt,
             start,
@@ -364,5 +366,5 @@ fn escaped_char(c: char) -> Result<char, LexErrorKind> {
 }
 
 fn ident_char(c: char) -> bool {
-    c > ' ' && c as u32 != 127
+    c > ' ' && c as u32 != 127 && !"[]{}()".contains(c)
 }

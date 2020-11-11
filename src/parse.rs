@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use crate::{ast::*, lex::*};
+use crate::{ast::*, lex::*, types::*};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseErrorKind {
@@ -44,24 +44,25 @@ struct Parser {
     tokens: std::vec::IntoIter<Token>,
     put_back: Option<Token>,
     defs: Vec<UnresolvedDef>,
+    loc: Loc,
 }
 
 impl Parser {
-    fn mat<F, R>(
+    fn next_token(&mut self) -> Option<Token> {
+        self.put_back.take().or_else(|| self.tokens.next())
+    }
+    fn mat<T: TTTransform>(
         &mut self,
         expected: &'static str,
-        start: Loc,
-        f: F,
-    ) -> Result<Spanned<R>, ParseError>
-    where
-        F: Fn(TT) -> Option<R>,
-    {
-        let token = if let Some(token) = self.put_back.take().or_else(|| self.tokens.next()) {
+        transform: T,
+    ) -> Result<Spanned<T::Output>, ParseError> {
+        let token = if let Some(token) = self.next_token() {
             token
         } else {
-            return Err(ParseErrorKind::Expected(expected).span(start, start));
+            return Err(ParseErrorKind::Expected(expected).span(self.loc, self.loc));
         };
-        if let Some(res) = f(token.tt.clone()) {
+        if let Some(res) = transform.transform(token.tt.clone()) {
+            self.loc = token.end;
             Ok(Spanned {
                 data: res,
                 start: token.start,
@@ -76,16 +77,12 @@ impl Parser {
             .span(token.start, token.end))
         }
     }
-    fn try_mat<F, R>(
+    fn try_mat<T: TTTransform>(
         &mut self,
         expected: &'static str,
-        start: Loc,
-        f: F,
-    ) -> Result<Option<Spanned<R>>, ParseError>
-    where
-        F: Fn(TT) -> Option<R>,
-    {
-        match self.mat(expected, start, f) {
+        transform: T,
+    ) -> Result<Option<Spanned<T::Output>>, ParseError> {
+        match self.mat(expected, transform) {
             Ok(sp) => Ok(Some(sp)),
             Err(ParseError {
                 kind: ParseErrorKind::ExpectedFound { .. },
@@ -94,25 +91,80 @@ impl Parser {
             Err(e) => Err(e),
         }
     }
-    fn def(&mut self, start: Loc) -> Result<Loc, ParseError> {
-        let colon = self.mat(":", start, |tt| bool_op(tt == TT::Colon))?;
-        let name = self.mat("identifier", colon.end, TT::ident)?;
+    // Match a type
+    fn ty(&mut self) -> Result<Option<UnresolvedType>, ParseError> {
+        if let Some(ident) = self.try_mat("type", TT::ident)? {
+            Ok(Some(match ident.data.as_str() {
+                "Bool" => UnresolvedType::Prim(Primitive::Bool),
+                "Nat" => UnresolvedType::Prim(Primitive::Nat),
+                "Int" => UnresolvedType::Prim(Primitive::Int),
+                "Float" => UnresolvedType::Prim(Primitive::Float),
+                "Text" => UnresolvedType::Prim(Primitive::String),
+                _ => UnresolvedType::Other(ident.data),
+            }))
+        } else if self.try_mat("[", TT::OpenBracket)?.is_some() {
+            if let Some(ty) = self.ty()? {
+                self.mat("]", TT::CloseBracket)?;
+                Ok(Some(UnresolvedType::Prim(Primitive::List(Box::new(ty)))))
+            } else {
+                self.expected("type")
+            }
+        } else {
+            Ok(None)
+        }
+    }
+    // Match a definition
+    fn def(&mut self) -> Result<(), ParseError> {
+        // Match the colon and name
+        self.mat(":", TT::Colon)?;
+        let name = self.mat("identifier", TT::ident)?;
+        // Match an optional type signature
+        let sig = if self.try_mat("(", TT::OpenParen)?.is_some() {
+            // Match before args types
+            let mut before = Vec::new();
+            while let Some(ty) = self.ty()? {
+                before.push(ty);
+            }
+            // Match double dash
+            self.mat("--", TT::DoubleDash)?;
+            // Match after args types
+            let mut after = Vec::new();
+            while let Some(ty) = self.ty()? {
+                after.push(ty);
+            }
+            // Match closing paren
+            self.mat(")", TT::CloseParen)?;
+            Some(Signature { before, after })
+        } else {
+            None
+        };
+        // Match the nodes
         let mut nodes = Vec::new();
-        let mut end = name.end;
         loop {
-            if let Some(node) = self.try_mat("term", end, TT::node)? {
-                end = node.end;
+            if let Some(node) = self.try_mat("term", TT::node)? {
                 nodes.push(node.data);
             } else {
-                end = self.mat(";", end, |tt| bool_op(tt == TT::SemiColon))?.end;
+                self.mat(";", TT::SemiColon)?;
                 break;
             }
         }
         self.defs.push(UnresolvedDef {
             name: name.data,
+            sig,
             nodes,
         });
-        Ok(end)
+        Ok(())
+    }
+    fn expected<T>(&mut self, expected: &'static str) -> Result<T, ParseError> {
+        Err(if let Some(token) = self.next_token() {
+            ParseErrorKind::ExpectedFound {
+                expected,
+                found: token.tt,
+            }
+            .span(token.start, token.end)
+        } else {
+            ParseErrorKind::Expected(expected).span(self.loc, self.loc)
+        })
     }
 }
 
@@ -125,10 +177,10 @@ where
         tokens: tokens.into_iter(),
         put_back: None,
         defs: Vec::new(),
+        loc: Loc::new(1, 1),
     };
-    let mut end = Loc::new(1, 1);
     while !parser.tokens.as_slice().is_empty() {
-        end = parser.def(end)?;
+        parser.def()?;
     }
     Ok(parser.defs)
 }
@@ -139,10 +191,28 @@ struct Spanned<T> {
     end: Loc,
 }
 
-fn bool_op(b: bool) -> Option<()> {
-    if b {
-        Some(())
-    } else {
-        None
+trait TTTransform {
+    type Output;
+    fn transform(self, tt: TT) -> Option<Self::Output>;
+}
+
+impl TTTransform for TT {
+    type Output = ();
+    fn transform(self, tt: TT) -> Option<Self::Output> {
+        if self == tt {
+            Some(())
+        } else {
+            None
+        }
+    }
+}
+
+impl<F, R> TTTransform for F
+where
+    F: Fn(TT) -> Option<R>,
+{
+    type Output = R;
+    fn transform(self, tt: TT) -> Option<Self::Output> {
+        self(tt)
     }
 }
