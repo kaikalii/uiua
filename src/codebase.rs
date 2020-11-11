@@ -37,11 +37,14 @@ impl CodeBase {
             let cb = cb_clone;
             for event in event_recv {
                 if let DebouncedEvent::Write(path) = event {
+                    // Handle file change
                     if let Err(e) = cb.handle_file_change(&path) {
                         if let Some(diff) = pathdiff::diff_paths(path, env::current_dir().unwrap())
                         {
-                            println!("\n{} {}", e, diff.to_string_lossy());
-                            cb.print_path();
+                            if !diff.starts_with(".git") {
+                                println!("\n{} {}", e, diff.to_string_lossy());
+                                cb.print_path();
+                            }
                         }
                     }
                 }
