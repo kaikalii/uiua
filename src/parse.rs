@@ -81,19 +81,12 @@ impl Parser {
         &mut self,
         expected: &'static str,
         transform: T,
-    ) -> Result<Option<Spanned<T::Output>>, ParseError> {
-        match self.mat(expected, transform) {
-            Ok(sp) => Ok(Some(sp)),
-            Err(ParseError {
-                kind: ParseErrorKind::ExpectedFound { .. },
-                ..
-            }) => Ok(None),
-            Err(e) => Err(e),
-        }
+    ) -> Option<Spanned<T::Output>> {
+        self.mat(expected, transform).ok()
     }
-    // Match a type
+    /// Match a type
     fn ty(&mut self) -> Result<Option<UnresolvedType>, ParseError> {
-        Ok(if let Some(ident) = self.try_mat("type", TT::ident)? {
+        Ok(if let Some(ident) = self.try_mat("type", TT::ident) {
             Some(match ident.data.as_str() {
                 "Bool" => UnresolvedType::Prim(Primitive::Bool),
                 "Nat" => UnresolvedType::Prim(Primitive::Nat),
@@ -102,7 +95,7 @@ impl Parser {
                 "Text" => UnresolvedType::Prim(Primitive::String),
                 _ => UnresolvedType::Other(ident.data),
             })
-        } else if self.try_mat("[", TT::OpenBracket)?.is_some() {
+        } else if self.try_mat("[", TT::OpenBracket).is_some() {
             if let Some(ty) = self.ty()? {
                 self.mat("]", TT::CloseBracket)?;
                 Some(UnresolvedType::Prim(Primitive::List(Box::new(ty))))
@@ -115,9 +108,9 @@ impl Parser {
             return Ok(None);
         })
     }
-    // Match a type signature
+    /// Match a type signature
     fn sig(&mut self) -> Result<Option<Signature<UnresolvedType>>, ParseError> {
-        Ok(if self.try_mat("(", TT::OpenParen)?.is_some() {
+        Ok(if self.try_mat("(", TT::OpenParen).is_some() {
             // Match before args types
             let mut before = Vec::new();
             while let Some(ty) = self.ty()? {
@@ -137,13 +130,13 @@ impl Parser {
             None
         })
     }
-    // Match a sequence of terms
+    /// Match a sequence of terms
     fn seq(&mut self) -> Result<Vec<UnresolvedNode>, ParseError> {
         let mut nodes = Vec::new();
         loop {
-            if let Some(node) = self.try_mat("term", TT::node)? {
+            if let Some(node) = self.try_mat("term", TT::node) {
                 nodes.push(node.data);
-            } else if self.try_mat("[", TT::OpenBracket)?.is_some() {
+            } else if self.try_mat("[", TT::OpenBracket).is_some() {
                 let sub_nodes = self.seq()?;
                 nodes.push(UnresolvedNode::Defered(sub_nodes));
                 self.mat("]", TT::CloseBracket)?;
@@ -153,7 +146,7 @@ impl Parser {
         }
         Ok(nodes)
     }
-    // Match a definition
+    /// Match a definition
     fn def(&mut self) -> Result<(), ParseError> {
         // Match the colon and name
         self.mat(":", TT::Colon)?;
@@ -162,6 +155,8 @@ impl Parser {
         let sig = self.sig()?;
         // Match the nodes
         let nodes = self.seq()?;
+        // Match the closing semicolon
+        self.try_mat(";", TT::SemiColon);
         self.defs.push(UnresolvedDef {
             name: name.data,
             sig,
