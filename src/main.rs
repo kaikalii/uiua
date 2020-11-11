@@ -2,6 +2,7 @@ mod ast;
 mod lex;
 mod num;
 mod parse;
+mod types;
 
 use std::{error::Error, fs::File, path::PathBuf};
 
