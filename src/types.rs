@@ -14,7 +14,7 @@ pub enum Primitive<T = Type> {
     Float,
     String,
     List(Box<T>),
-    Op(Signature),
+    Op(Signature<T>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

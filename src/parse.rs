@@ -93,33 +93,31 @@ impl Parser {
     }
     // Match a type
     fn ty(&mut self) -> Result<Option<UnresolvedType>, ParseError> {
-        if let Some(ident) = self.try_mat("type", TT::ident)? {
-            Ok(Some(match ident.data.as_str() {
+        Ok(if let Some(ident) = self.try_mat("type", TT::ident)? {
+            Some(match ident.data.as_str() {
                 "Bool" => UnresolvedType::Prim(Primitive::Bool),
                 "Nat" => UnresolvedType::Prim(Primitive::Nat),
                 "Int" => UnresolvedType::Prim(Primitive::Int),
                 "Float" => UnresolvedType::Prim(Primitive::Float),
                 "Text" => UnresolvedType::Prim(Primitive::String),
                 _ => UnresolvedType::Other(ident.data),
-            }))
+            })
         } else if self.try_mat("[", TT::OpenBracket)?.is_some() {
             if let Some(ty) = self.ty()? {
                 self.mat("]", TT::CloseBracket)?;
-                Ok(Some(UnresolvedType::Prim(Primitive::List(Box::new(ty)))))
+                Some(UnresolvedType::Prim(Primitive::List(Box::new(ty))))
             } else {
-                self.expected("type")
+                return self.expected("type");
             }
+        } else if let Some(sig) = self.sig()? {
+            Some(UnresolvedType::Prim(Primitive::Op(sig)))
         } else {
-            Ok(None)
-        }
+            return Ok(None);
+        })
     }
-    // Match a definition
-    fn def(&mut self) -> Result<(), ParseError> {
-        // Match the colon and name
-        self.mat(":", TT::Colon)?;
-        let name = self.mat("identifier", TT::ident)?;
-        // Match an optional type signature
-        let sig = if self.try_mat("(", TT::OpenParen)?.is_some() {
+    // Match a type signature
+    fn sig(&mut self) -> Result<Option<Signature<UnresolvedType>>, ParseError> {
+        Ok(if self.try_mat("(", TT::OpenParen)?.is_some() {
             // Match before args types
             let mut before = Vec::new();
             while let Some(ty) = self.ty()? {
@@ -137,7 +135,15 @@ impl Parser {
             Some(Signature { before, after })
         } else {
             None
-        };
+        })
+    }
+    // Match a definition
+    fn def(&mut self) -> Result<(), ParseError> {
+        // Match the colon and name
+        self.mat(":", TT::Colon)?;
+        let name = self.mat("identifier", TT::ident)?;
+        // Match an optional type signature
+        let sig = self.sig()?;
         // Match the nodes
         let mut nodes = Vec::new();
         loop {
