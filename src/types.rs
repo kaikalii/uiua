@@ -92,6 +92,19 @@ fn sig_compose() {
     let b = Signature::new(vec![Float.into()], vec![Bool.into()]);
     let c = Signature::new(vec![Nat.into()], vec![Bool.into()]);
     assert_eq!(a.compose(&b).unwrap(), c);
+    let a = Signature::new(vec![Nat.into(); 2], vec![Nat.into()]);
+    let b = Signature::new(
+        vec![Primitive::list(Nat.into()).into(), Nat.into()],
+        vec![Primitive::list(Nat.into()).into()],
+    );
+    let c = Signature::new(
+        vec![Primitive::list(Nat.into()).into(), Nat.into(), Nat.into()],
+        vec![Primitive::list(Nat.into()).into()],
+    );
+    assert_eq!(a.compose(&b).unwrap(), c);
+    let a = Signature::new(vec![Nat.into()], vec![Float.into()]);
+    let b = Signature::new(vec![Nat.into()], vec![Bool.into()]);
+    assert!(a.compose(&b).is_err());
 }
 
 #[derive(Debug, thiserror::Error)]
