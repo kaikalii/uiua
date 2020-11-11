@@ -31,7 +31,7 @@ impl CodeBase {
             path: Arc::new(Mutex::new(Vec::new())),
         };
         let cb_clone = cb.clone();
-        // Spawn rection thread
+        // Spawn watcher thread
         thread::spawn(move || {
             let _ = watcher;
             let cb = cb_clone;

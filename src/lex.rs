@@ -245,6 +245,15 @@ where
                         .next()
                         .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start, loc!()))?);
                     if next == '-' {
+                        // Check for fold
+                        if let Some(c) = chars.next() {
+                            if let Ok('-') = c {
+                                for _ in chars.by_ref() {}
+                                continue;
+                            } else {
+                                chars.put_back(c);
+                            }
+                        }
                         double_dash = true;
                     } else {
                         chars.put_back(Ok(next));
