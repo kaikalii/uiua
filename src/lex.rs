@@ -12,6 +12,7 @@ pub enum TT {
     Int(i64),
     Nat(i64),
     Char(char),
+    Bool(bool),
     OpenBracket,
     CloseBracket,
     OpenCurly,
@@ -254,7 +255,11 @@ where
                         break;
                     }
                 }
-                TT::Ident(s)
+                match s.as_str() {
+                    "true" => TT::Bool(true),
+                    "false" => TT::Bool(false),
+                    _ => TT::Ident(s),
+                }
             }
             c => return Err(LexErrorKind::InvalidCharacter(c).span(start, loc!())),
         };
