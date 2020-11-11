@@ -42,7 +42,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     });
     // Init codebase
     let cb_path = app.codebase.unwrap_or_else(|| PathBuf::from("."));
-    let mut cb = CodeBase::open(cb_path)?;
+    let cb = CodeBase::open(cb_path)?;
     cb.print_path();
     // Command loop
     for line in recv {

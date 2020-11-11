@@ -6,9 +6,9 @@ use crate::{ast::*, lex::*, types::*};
 pub enum ParseErrorKind {
     #[error("{0}")]
     Lex(LexErrorKind),
-    #[error("Expected {0}")]
+    #[error("Expected '{0}'")]
     Expected(&'static str),
-    #[error("Expected {expected} found '{found}'")]
+    #[error("Expected '{expected}' found '{found}'")]
     ExpectedFound { expected: &'static str, found: TT },
 }
 
