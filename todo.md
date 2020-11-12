@@ -1,0 +1,5 @@
+- Parse generics
+- Runtime
+- Modules
+- Lots more builtins
+- Codebase only watches certain paths
