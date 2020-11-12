@@ -7,6 +7,7 @@ mod lex;
 mod num;
 mod parse;
 mod resolve;
+mod span;
 mod types;
 
 use std::{

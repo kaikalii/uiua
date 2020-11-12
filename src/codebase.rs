@@ -60,7 +60,7 @@ impl CodeBase {
             let mut defs = self.defs.lock().unwrap();
             let def = resolve::resolve_def(&unresolved_def, &defs)?;
             println!("{}", def.sig);
-            defs.insert_def(unresolved_def.name, def);
+            defs.insert_def(unresolved_def.data.name.data, def);
             self.print_path_prompt();
         }
         Ok(())

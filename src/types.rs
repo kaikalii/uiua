@@ -2,7 +2,7 @@ use std::{fmt, mem};
 
 use sha3::*;
 
-use crate::ast::Hash;
+use crate::{ast::Hash, span::*};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -312,6 +312,6 @@ pub enum TypeError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnresolvedType {
-    Prim(Primitive<Self>),
+    Prim(Primitive<Sp<UnresolvedType>>),
     Other(String),
 }

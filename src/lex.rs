@@ -4,7 +4,7 @@ use std::{
     io::{self, Read},
 };
 
-use crate::ast::*;
+use crate::{ast::*, span::*};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TT {
@@ -80,29 +80,10 @@ impl fmt::Display for TT {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Loc {
-    pub line: usize,
-    pub col: usize,
-}
-
-impl Loc {
-    pub fn new(line: usize, col: usize) -> Loc {
-        Loc { line, col }
-    }
-}
-
-impl fmt::Display for Loc {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.line, self.col)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Token {
     pub tt: TT,
-    pub start: Loc,
-    pub end: Loc,
+    pub span: Span,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -131,18 +112,16 @@ impl LexErrorKind {
     pub fn span(self, start: Loc, end: Loc) -> LexError {
         LexError {
             kind: self,
-            start,
-            end,
+            span: Span::new(start, end),
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("{kind} {end}")]
+#[error("{kind} {}", span.end)]
 pub struct LexError {
     pub kind: LexErrorKind,
-    pub start: Loc,
-    pub end: Loc,
+    pub span: Span,
 }
 
 fn found_char(found: Option<char>) -> String {
@@ -354,8 +333,7 @@ where
         };
         tokens.push(Token {
             tt,
-            start,
-            end: Loc::new(line.get(), col.get()),
+            span: Span::new(start, Loc::new(line.get(), col.get())),
         });
     }
     if let Some(brack) = brackets.pop() {

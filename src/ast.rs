@@ -2,7 +2,7 @@ use std::{fmt, mem};
 
 use sha3::*;
 
-use crate::{builtin::Builtin, types::*};
+use crate::{builtin::Builtin, span::*, types::*};
 
 type HashInner =
     digest::generic_array::GenericArray<u8, digest::generic_array::typenum::consts::U32>;
@@ -65,7 +65,7 @@ pub enum DefKind {
 pub enum Node {
     Ident(Hash),
     SelfIdent,
-    Defered(Vec<Node>),
+    Defered(Vec<Sp<Node>>),
     Literal(Literal),
 }
 
@@ -87,15 +87,15 @@ impl Node {
 
 #[derive(Debug, Clone)]
 pub struct UnresolvedDef {
-    pub name: String,
-    pub sig: Option<Signature<UnresolvedType>>,
-    pub nodes: Vec<UnresolvedNode>,
+    pub name: Sp<String>,
+    pub sig: Option<Sp<Signature<Sp<UnresolvedType>>>>,
+    pub nodes: Vec<Sp<UnresolvedNode>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum UnresolvedNode {
     Ident(String),
-    Defered(Vec<UnresolvedNode>),
+    Defered(Vec<Sp<UnresolvedNode>>),
     Literal(Literal),
 }
 
