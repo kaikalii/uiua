@@ -27,20 +27,28 @@ builtin!(
 );
 
 fn generic_list() -> Type {
-    Primitive::list(Type::Generic(0)).into()
+    Primitive::list(Type::Generic(Generic::new("T", 0))).into()
 }
 
-fn generic(g: u8) -> Type {
-    Type::Generic(g)
+fn generic(name: &str, i: u8) -> Type {
+    Type::Generic(Generic::new(name, i))
+}
+
+fn t() -> Type {
+    generic("T", 0)
+}
+
+fn u() -> Type {
+    generic("U", 1)
 }
 
 impl Builtin {
     pub fn sig(&self) -> Signature {
         let (before, after) = match self {
-            Builtin::Dup => (vec![generic(0)], vec![generic(0); 2]),
+            Builtin::Dup => (vec![t()], vec![t(); 2]),
             Builtin::List => (vec![], vec![generic_list()]),
-            Builtin::App => (vec![generic_list(), generic(0)], vec![generic_list()]),
-            Builtin::Swap => (vec![generic(0), generic(1)], vec![generic(1), generic(0)]),
+            Builtin::App => (vec![generic_list(), t()], vec![generic_list()]),
+            Builtin::Swap => (vec![t(), u()], vec![u(), t()]),
         };
         Signature::new(before, after)
     }

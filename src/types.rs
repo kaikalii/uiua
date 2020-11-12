@@ -7,7 +7,7 @@ use crate::{ast::Hash, span::*};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Prim(Primitive),
-    Generic(u8),
+    Generic(Generic),
 }
 
 impl Type {
@@ -20,12 +20,12 @@ impl Type {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
             Type::Prim(prim) => prim.hash(sha),
-            Type::Generic(i) => sha.update(&[*i]),
+            Type::Generic(g) => sha.update(&[g.index]),
         }
     }
     pub fn generics(&self) -> Vec<u8> {
         let mut generics = match self {
-            Type::Generic(i) => vec![*i],
+            Type::Generic(g) => vec![g.index],
             Type::Prim(prim) => match prim {
                 Primitive::List(inner) => inner.generics(),
                 Primitive::Op(sig) => sig
@@ -53,7 +53,22 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Type::Prim(prim) => prim.fmt(f),
-            Type::Generic(i) => write!(f, "{{{}}}", i),
+            Type::Generic(g) => g.name.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Generic {
+    pub name: String,
+    pub index: u8,
+}
+
+impl Generic {
+    pub fn new<S: Into<String>>(name: S, index: u8) -> Generic {
+        Generic {
+            name: name.into(),
+            index,
         }
     }
 }
@@ -151,15 +166,15 @@ impl Signature {
                     + 1;
                 for ty in &mut b.before {
                     transform_type(ty, &|ty| {
-                        if let Type::Generic(i) = ty {
-                            *i += add_to_b;
+                        if let Type::Generic(g) = ty {
+                            g.index += add_to_b;
                         }
                     });
                 }
                 for ty in &mut b.after {
                     transform_type(ty, &|ty| {
-                        if let Type::Generic(i) = ty {
-                            *i += add_to_b;
+                        if let Type::Generic(g) = ty {
+                            g.index += add_to_b;
                         }
                     });
                 }
@@ -223,9 +238,9 @@ impl Signature {
 
 fn trade_generics(a: &mut Type, b: &mut Type, conv: &mut Vec<(u8, Type)>) {
     match (a, b) {
-        (Type::Generic(a), Type::Generic(b)) => conv.push((*b, Type::Generic(*a))),
-        (Type::Generic(a), ref b) => conv.push((*a, (*b).clone())),
-        (ref a, Type::Generic(b)) => conv.push((*b, (*a).clone())),
+        (Type::Generic(a), Type::Generic(b)) => conv.push((b.index, Type::Generic(a.clone()))),
+        (Type::Generic(a), ref b) => conv.push((a.index, (*b).clone())),
+        (ref a, Type::Generic(b)) => conv.push((b.index, (*a).clone())),
         (Type::Prim(a), Type::Prim(b)) => match (a, b) {
             (Primitive::List(a), Primitive::List(b)) => trade_generics(a, b, conv),
             (Primitive::Op(a), Primitive::Op(b)) => {
@@ -243,8 +258,8 @@ fn trade_generics(a: &mut Type, b: &mut Type, conv: &mut Vec<(u8, Type)>) {
 
 fn set_generic(ty: &mut Type, i: u8, new: &Type) {
     transform_type(ty, &|ty| {
-        if let Type::Generic(j) = ty {
-            if &i == j {
+        if let Type::Generic(g) = ty {
+            if i == g.index {
                 *ty = new.clone()
             }
         }
