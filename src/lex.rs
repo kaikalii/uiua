@@ -11,7 +11,7 @@ pub enum TT {
     Ident(String),
     Text(String),
     Bool(bool),
-    NatOrInt(u64),
+    Nat(u64),
     Int(i64),
     Float(f64),
     Char(char),
@@ -47,7 +47,7 @@ impl TT {
             TT::Ident(s) => UnresolvedNode::Ident(s),
             TT::Text(s) => UnresolvedNode::Literal(Literal::Text(s)),
             TT::Bool(b) => UnresolvedNode::Literal(Literal::Bool(b)),
-            TT::NatOrInt(n) => UnresolvedNode::Literal(Literal::NatOrInt(n)),
+            TT::Nat(n) => UnresolvedNode::Literal(Literal::Nat(n)),
             TT::Int(n) => UnresolvedNode::Literal(Literal::Int(n)),
             TT::Float(n) => UnresolvedNode::Literal(Literal::Float(n)),
             TT::Char(c) => UnresolvedNode::Literal(Literal::Char(c)),
@@ -62,7 +62,7 @@ impl fmt::Display for TT {
             TT::Ident(s) => s.fmt(f),
             TT::Text(s) => write!(f, "{:?}", s),
             TT::Bool(b) => b.fmt(f),
-            TT::NatOrInt(n) => n.fmt(f),
+            TT::Nat(n) => n.fmt(f),
             TT::Int(n) => n.fmt(f),
             TT::Float(n) => n.fmt(f),
             TT::Char(c) => c.fmt(f),
@@ -238,7 +238,7 @@ where
                 TT::Char(c)
             }
             // Num literals or double dash
-            c if c.is_digit(10) || c == '-' => {
+            c if c.is_digit(10) || c == '-' || c == '+' => {
                 let mut double_dash = false;
                 if c == '-' {
                     let next = ok!(chars
@@ -278,10 +278,10 @@ where
                     }
                     if period {
                         TT::Float(ok!(s.parse()))
-                    } else if s.starts_with('-') {
+                    } else if s.starts_with('-') || s.starts_with('+') {
                         TT::Int(ok!(s.parse()))
                     } else {
-                        TT::NatOrInt(ok!(s.parse()))
+                        TT::Nat(ok!(s.parse()))
                     }
                 }
             }

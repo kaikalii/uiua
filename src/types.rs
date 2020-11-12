@@ -1,14 +1,42 @@
-use std::collections::HashMap;
+use std::{fmt, mem};
+
+use sha3::*;
+
+use crate::ast::Hash;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Prim(Primitive),
-    Struct(HashMap<String, Type>),
+    Generic(u8),
+}
+
+impl Type {
+    pub fn hash_finish(&self) -> Hash {
+        let mut sha = Sha3_256::default();
+        self.hash(&mut sha);
+        Hash(sha.finalize())
+    }
+    pub fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
+        match self {
+            Type::Prim(prim) => prim.hash(sha),
+            Type::Generic(i) => sha.update(&[*i]),
+        }
+    }
 }
 
 impl From<Primitive> for Type {
     fn from(prim: Primitive) -> Self {
         Type::Prim(prim)
+    }
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Type::Prim(prim) => prim.fmt(f),
+            Type::Generic(i) => write!(f, "{{{}}}", i),
+        }
     }
 }
 
@@ -18,7 +46,8 @@ pub enum Primitive<T = Type> {
     Nat,
     Int,
     Float,
-    String,
+    Char,
+    Text,
     List(Box<T>),
     Op(Signature<T>),
 }
@@ -26,6 +55,44 @@ pub enum Primitive<T = Type> {
 impl<T> Primitive<T> {
     pub fn list(inner: T) -> Self {
         Primitive::List(Box::new(inner))
+    }
+}
+
+impl Primitive {
+    pub fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
+        match self {
+            Primitive::List(inner) => inner.hash(sha),
+            Primitive::Op(sig) => {
+                sha.update(sig.before.len().to_le_bytes());
+                sha.update(sig.after.len().to_le_bytes());
+                for ty in &sig.before {
+                    ty.hash(sha);
+                }
+                for ty in &sig.after {
+                    ty.hash(sha);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<T> fmt::Display for Primitive<T>
+where
+    T: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Primitive::Bool => write!(f, "Bool"),
+            Primitive::Nat => write!(f, "Nat"),
+            Primitive::Int => write!(f, "Int"),
+            Primitive::Float => write!(f, "Float"),
+            Primitive::Char => write!(f, "Char"),
+            Primitive::Text => write!(f, "Text"),
+            Primitive::List(inner) => write!(f, "[{}]", inner),
+            Primitive::Op(sig) => fmt::Display::fmt(sig, f),
+        }
     }
 }
 
@@ -77,6 +144,23 @@ impl Signature {
             .cloned()
             .collect();
         Ok(Signature::new(before, after))
+    }
+}
+
+impl<T> fmt::Display for Signature<T>
+where
+    T: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "( ")?;
+        for ty in &self.before {
+            write!(f, "{} ", ty)?;
+        }
+        write!(f, "-- ")?;
+        for ty in &self.after {
+            write!(f, "{} ", ty)?;
+        }
+        write!(f, ")")
     }
 }
 

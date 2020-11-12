@@ -1,16 +1,64 @@
-use std::mem;
+use std::{fmt, mem};
 
 use sha3::*;
 
-use crate::types::*;
+use crate::{builtin::Builtin, types::*};
 
-pub type Hash =
+type HashInner =
     digest::generic_array::GenericArray<u8, digest::generic_array::typenum::consts::U32>;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Hash(pub HashInner);
+
+impl fmt::Debug for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+
+impl AsRef<[u8]> for Hash {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Def {
-    pub ty: Type,
-    pub nodes: Vec<Node>,
+    pub sig: Signature,
+    pub kind: DefKind,
+}
+
+impl Def {
+    pub fn hash_finish(&self) -> Hash {
+        let mut sha = Sha3_256::default();
+        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(&self.kind)) });
+        match &self.kind {
+            DefKind::Uiua(nodes) => {
+                for node in nodes {
+                    node.hash(&mut sha);
+                }
+            }
+            DefKind::Builtin(bi) => {
+                sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(bi)) });
+            }
+        }
+        Hash(sha.finalize())
+    }
+}
+
+impl From<Builtin> for Def {
+    fn from(builtin: Builtin) -> Self {
+        Def {
+            sig: builtin.sig(),
+            kind: DefKind::Builtin(builtin),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DefKind {
+    Uiua(Vec<Node>),
+    Builtin(Builtin),
 }
 
 #[derive(Debug, Clone)]
@@ -18,12 +66,23 @@ pub enum Node {
     Ident(Hash),
     SelfIdent,
     Defered(Vec<Node>),
-    Bool(bool),
-    Nat(u64),
-    Int(i64),
-    Float(f64),
-    Char(char),
-    Text(String),
+    Literal(Literal),
+}
+
+impl Node {
+    pub fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
+        match self {
+            Node::Ident(hash) => sha.update(hash),
+            Node::Defered(nodes) => {
+                for node in nodes {
+                    node.hash(sha);
+                }
+            }
+            Node::SelfIdent => {}
+            Node::Literal(lit) => lit.hash(sha),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -40,30 +99,10 @@ pub enum UnresolvedNode {
     Literal(Literal),
 }
 
-impl UnresolvedNode {
-    pub fn hash(&self) -> Hash {
-        let mut sha = Sha3_256::default();
-        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
-        self.hash_recursive(&mut sha);
-        sha.finalize()
-    }
-    fn hash_recursive(&self, sha: &mut Sha3_256) {
-        match self {
-            UnresolvedNode::Ident(hash) => sha.update(hash),
-            UnresolvedNode::Defered(nodes) => {
-                for node in nodes {
-                    node.hash_recursive(sha);
-                }
-            }
-            UnresolvedNode::Literal(lit) => lit.hash(sha),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Literal {
     Bool(bool),
-    NatOrInt(u64),
+    Nat(u64),
     Int(i64),
     Float(f64),
     Char(char),
@@ -71,15 +110,25 @@ pub enum Literal {
 }
 
 impl Literal {
-    fn hash(&self, sha: &mut Sha3_256) {
+    pub fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
             Literal::Bool(b) => sha.update(&[*b as u8]),
-            Literal::NatOrInt(n) => sha.update(&unsafe { mem::transmute::<_, [u8; 8]>(*n) }),
+            Literal::Nat(n) => sha.update(&unsafe { mem::transmute::<_, [u8; 8]>(*n) }),
             Literal::Int(n) => sha.update(&unsafe { mem::transmute::<_, [u8; 8]>(*n) }),
             Literal::Float(n) => sha.update(&unsafe { mem::transmute::<_, [u8; 8]>(*n) }),
             Literal::Char(c) => sha.update(&unsafe { mem::transmute::<_, [u8; 4]>(*c) }),
             Literal::Text(s) => sha.update(s),
+        }
+    }
+    pub fn as_primitive<T>(&self) -> Primitive<T> {
+        match self {
+            Literal::Bool(_) => Primitive::Bool,
+            Literal::Nat(_) => Primitive::Nat,
+            Literal::Int(_) => Primitive::Int,
+            Literal::Float(_) => Primitive::Float,
+            Literal::Char(_) => Primitive::Char,
+            Literal::Text(_) => Primitive::Text,
         }
     }
 }

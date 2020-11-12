@@ -92,7 +92,7 @@ impl Parser {
                 "Nat" => UnresolvedType::Prim(Primitive::Nat),
                 "Int" => UnresolvedType::Prim(Primitive::Int),
                 "Float" => UnresolvedType::Prim(Primitive::Float),
-                "Text" => UnresolvedType::Prim(Primitive::String),
+                "Text" => UnresolvedType::Prim(Primitive::Text),
                 _ => UnresolvedType::Other(ident.data),
             })
         } else if self.try_mat("[", TT::OpenBracket).is_some() {
@@ -125,7 +125,7 @@ impl Parser {
             }
             // Match closing paren
             self.mat(")", TT::CloseParen)?;
-            Some(Signature { before, after })
+            Some(Signature::new(before, after))
         } else {
             None
         })

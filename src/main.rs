@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 
 mod ast;
+mod builtin;
 mod codebase;
 mod lex;
 mod num;
 mod parse;
+mod resolve;
 mod types;
 
 use std::{
