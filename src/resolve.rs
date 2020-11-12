@@ -135,7 +135,10 @@ pub fn node_sig(
         Node::SelfIdent => self_sig
             .cloned()
             .ok_or_else(|| name.clone().map(ResolutionError::RecursiveNoSignature)),
-        Node::Defered(nodes) => seq_sig(nodes, defs, None, name),
+        Node::Defered(nodes) => Ok(node.span.sp(Signature::new(
+            vec![],
+            vec![Primitive::Op(seq_sig(nodes, defs, None, name)?.data).into()],
+        ))),
         Node::Literal(lit) => Ok(node
             .span
             .sp(Signature::new(vec![], vec![lit.as_primitive().into()]))),
