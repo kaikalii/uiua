@@ -59,7 +59,7 @@ impl CodeBase {
         for unresolved_def in parse::parse(fs::File::open(path)?)? {
             let mut defs = self.defs.lock().unwrap();
             let def = resolve::resolve_def(&unresolved_def, &defs)?;
-            println!("{:#?}", def);
+            println!("{}", def.sig);
             defs.insert_def(unresolved_def.name, def);
             self.print_path_prompt();
         }

@@ -23,6 +23,24 @@ impl Type {
             Type::Generic(i) => sha.update(&[*i]),
         }
     }
+    pub fn generics(&self) -> Vec<u8> {
+        let mut generics = match self {
+            Type::Generic(i) => vec![*i],
+            Type::Prim(prim) => match prim {
+                Primitive::List(inner) => inner.generics(),
+                Primitive::Op(sig) => sig
+                    .before
+                    .iter()
+                    .flat_map(Type::generics)
+                    .chain(sig.after.iter().flat_map(Type::generics))
+                    .collect(),
+                _ => Vec::new(),
+            },
+        };
+        generics.sort_unstable();
+        generics.dedup();
+        generics
+    }
 }
 
 impl From<Primitive> for Type {
@@ -109,17 +127,74 @@ impl<T> Signature<T> {
 }
 
 impl Signature {
+    fn generics(&self) -> Vec<u8> {
+        let mut generics: Vec<_> = self
+            .before
+            .iter()
+            .flat_map(Type::generics)
+            .chain(self.after.iter().flat_map(Type::generics))
+            .collect();
+        generics.sort_unstable();
+        generics.dedup();
+        generics
+    }
     pub fn compose(&self, b: &Self) -> Result<Self, TypeError> {
-        let a = self;
+        let mut a = self.clone();
+        let mut b = b.clone();
+        // Loop over the reversed outputs of a zipped with the reversed inputs of b
         let mut i = 0;
         loop {
             if a.after.len() > i && b.before.len() > i {
-                let a_after = &a.after[a.after.len() - 1 - i];
-                let b_before = &b.before[b.before.len() - 1 - i];
-                if a_after != b_before {
+                // Make b's generics different than a's
+                let add_to_b = a.generics().last().copied().unwrap_or(0)
+                    - a.generics().first().copied().unwrap_or(0)
+                    + 1;
+                for ty in &mut b.before {
+                    transform_type(ty, &|ty| {
+                        if let Type::Generic(i) = ty {
+                            *i += add_to_b;
+                        }
+                    });
+                }
+                for ty in &mut b.after {
+                    transform_type(ty, &|ty| {
+                        if let Type::Generic(i) = ty {
+                            *i += add_to_b;
+                        }
+                    });
+                }
+                let a_len = a.after.len();
+                let b_len = b.before.len();
+                let a_after = &mut a.after[a_len - 1 - i];
+                let b_before = &mut b.before[b_len - 1 - i];
+                let mut conv = Vec::new();
+                if a_after != b_before && a_after.generics() == b_before.generics() {
                     return Err(TypeError::Mismatch {
                         expected: b_before.clone(),
                         found: a_after.clone(),
+                    });
+                }
+                trade_generics(a_after, b_before, &mut conv);
+                for (g, new) in conv {
+                    for ty in &mut a.before {
+                        set_generic(ty, g, &new);
+                    }
+                    for ty in &mut a.after {
+                        set_generic(ty, g, &new);
+                    }
+                    for ty in &mut b.before {
+                        set_generic(ty, g, &new);
+                    }
+                    for ty in &mut b.after {
+                        set_generic(ty, g, &new);
+                    }
+                }
+                let a_after = &a.after[a_len - 1 - i];
+                let b_before = &b.before[b_len - 1 - i];
+                if a_after != b_before {
+                    return Err(TypeError::Mismatch {
+                        found: a_after.clone(),
+                        expected: b_before.clone(),
                     });
                 }
             } else {
@@ -127,23 +202,74 @@ impl Signature {
             }
             i += 1;
         }
+        // Build new states using the remamining types
         let before = b
             .before
             .iter()
-            .rev()
-            .skip(i)
+            .take(b.before.len() - i)
             .chain(&a.before)
             .cloned()
             .collect();
         let after = a
             .after
             .iter()
-            .rev()
-            .skip(i)
+            .take(a.after.len() - i)
             .chain(&b.after)
             .cloned()
             .collect();
         Ok(Signature::new(before, after))
+    }
+}
+
+fn trade_generics(a: &mut Type, b: &mut Type, conv: &mut Vec<(u8, Type)>) {
+    match (a, b) {
+        (Type::Generic(a), Type::Generic(b)) => conv.push((*b, Type::Generic(*a))),
+        (Type::Generic(a), ref b) => conv.push((*a, (*b).clone())),
+        (ref a, Type::Generic(b)) => conv.push((*b, (*a).clone())),
+        (Type::Prim(a), Type::Prim(b)) => match (a, b) {
+            (Primitive::List(a), Primitive::List(b)) => trade_generics(a, b, conv),
+            (Primitive::Op(a), Primitive::Op(b)) => {
+                for (a, b) in a.before.iter_mut().rev().zip(b.before.iter_mut().rev()) {
+                    trade_generics(a, b, conv);
+                }
+                for (a, b) in a.after.iter_mut().rev().zip(b.after.iter_mut().rev()) {
+                    trade_generics(a, b, conv);
+                }
+            }
+            _ => {}
+        },
+    }
+}
+
+fn set_generic(ty: &mut Type, i: u8, new: &Type) {
+    transform_type(ty, &|ty| {
+        if let Type::Generic(j) = ty {
+            if &i == j {
+                *ty = new.clone()
+            }
+        }
+    })
+}
+
+fn transform_type<F>(ty: &mut Type, f: &F)
+where
+    F: Fn(&mut Type),
+{
+    f(ty);
+    match ty {
+        Type::Prim(prim) => match prim {
+            Primitive::List(inner) => transform_type(inner, f),
+            Primitive::Op(sig) => {
+                for ty in &mut sig.before {
+                    transform_type(ty, f)
+                }
+                for ty in &mut sig.after {
+                    transform_type(ty, f)
+                }
+            }
+            _ => {}
+        },
+        Type::Generic(_) => {}
     }
 }
 
@@ -180,7 +306,7 @@ fn sig_compose() {
 
 #[derive(Debug, thiserror::Error)]
 pub enum TypeError {
-    #[error("Expected {expected:?} found {found:?}")]
+    #[error("Expected {expected} found {found}")]
     Mismatch { expected: Type, found: Type },
 }
 
