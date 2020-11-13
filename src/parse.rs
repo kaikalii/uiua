@@ -113,20 +113,16 @@ impl Parser {
         })
     }
     /// Match type parameter declaration
-    fn type_params(&mut self) -> Result<Option<UnresolvedTypeParams>, ParseError> {
-        Ok(if let Some(open_curly) = self.try_mat("{", TT::OpenCurly) {
-            let start = open_curly.span.start;
-            // Match before args types
-            let mut names = Vec::new();
-            while let Some(name) = self.try_mat("type parameter", TT::ident) {
-                names.push(name);
-            }
-            // Match closing paren
-            let end = self.mat("}", TT::CloseCurly)?.span.end;
-            Some(Span::new(start, end).sp(names))
-        } else {
-            None
-        })
+    fn type_params(&mut self) -> Result<UnresolvedTypeParams, ParseError> {
+        let start = self.loc;
+        // Match type params names
+        let mut names = Vec::new();
+        let mut end = start;
+        while let Some(name) = self.try_mat("type parameter", TT::ident) {
+            end = name.span.end;
+            names.push(name);
+        }
+        Ok(Span::new(start, end).sp(names))
     }
     /// Match a type signature
     fn sig(
@@ -177,15 +173,18 @@ impl Parser {
         }
         Ok(nodes)
     }
-    /// Match a definition
-    fn def(&mut self) -> Result<(), ParseError> {
-        // Match the colon and name
+    /// Match a word definition
+    fn word(&mut self) -> Result<(), ParseError> {
+        // Match the colon
         let start = self.mat(":", TT::Colon)?.span.start;
+        // Match the name
         let name = self.mat("identifier", TT::ident)?;
         // Match optional type parameters
         let type_params = self.type_params()?;
         // Match an optional type signature
-        let sig = self.sig(type_params)?;
+        let sig = self.sig(Some(type_params))?;
+        // Match equals sign
+        self.mat("=", TT::Equals)?;
         // Match the nodes
         let nodes = self.seq()?;
         // Match the closing semicolon
@@ -223,7 +222,7 @@ where
         loc: Loc::new(1, 1),
     };
     while !parser.tokens.as_slice().is_empty() {
-        parser.def()?;
+        parser.word()?;
     }
     Ok(parser.defs)
 }

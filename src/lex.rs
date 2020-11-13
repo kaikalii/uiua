@@ -26,6 +26,7 @@ pub enum TT {
     SemiColon,
     Tilde,
     Period,
+    Equals,
 }
 
 impl TT {
@@ -77,6 +78,7 @@ impl fmt::Display for TT {
             TT::SemiColon => ";".fmt(f),
             TT::Tilde => "~".fmt(f),
             TT::Period => ".".fmt(f),
+            TT::Equals => "=".fmt(f),
         }
     }
 }
@@ -327,6 +329,7 @@ where
             ';' => TT::SemiColon,
             '~' => TT::Tilde,
             '.' => TT::Period,
+            '=' => TT::Equals,
             c if c.is_whitespace() => continue,
             // Idents and others
             c if ident_char(c) => {

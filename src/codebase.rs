@@ -14,7 +14,7 @@ use std::{
 use colored::*;
 use notify::{self, watcher, DebouncedEvent, RecursiveMode, Watcher};
 
-use crate::{ast::*, builtin::*, parse, resolve::*, span::*, types::*};
+use crate::{ast::*, builtin::*, parse::*, resolve::*, span::*, types::*};
 
 #[derive(Clone)]
 pub struct CodeBase {
@@ -64,10 +64,18 @@ impl CodeBase {
         *defs = Defs::default();
         let path = path.to_path_buf();
         let buffer = fs::read(&path)?;
-        let mut unresolved_words: Vec<_> = parse::parse(buffer.as_slice())?
-            .into_iter()
-            .map(|ud| (ud, None))
-            .collect();
+        let mut comp = Compilation {
+            path,
+            errors: Vec::new(),
+            code: String::from_utf8_lossy(&buffer).into_owned(),
+        };
+        let mut unresolved_words: Vec<_> = match parse(buffer.as_slice()) {
+            Ok(uw) => uw.into_iter().map(|ud| (ud, None)).collect(),
+            Err(e) => {
+                comp.errors.push(e.span.sp(CompileError::Parse(e.kind)));
+                return Ok(comp);
+            }
+        };
         let mut last_len = 0;
         loop {
             unresolved_words = unresolved_words
@@ -86,14 +94,12 @@ impl CodeBase {
             }
             last_len = unresolved_words.len();
         }
-        Ok(Compilation {
-            path,
-            errors: unresolved_words
+        comp.errors.extend(
+            unresolved_words
                 .into_iter()
-                .filter_map(|(_, e)| e)
-                .collect(),
-            code: String::from_utf8_lossy(&buffer).into_owned(),
-        })
+                .filter_map(|(_, e)| e.map(|e| e.map(Into::into))),
+        );
+        Ok(comp)
     }
     pub fn dir(&self) -> PathBuf {
         self.path
@@ -214,9 +220,17 @@ where
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum CompileError {
+    #[error("{0}")]
+    Resolution(#[from] ResolutionError),
+    #[error("{0}")]
+    Parse(#[from] ParseErrorKind),
+}
+
 struct Compilation {
     path: PathBuf,
-    errors: Vec<Sp<ResolutionError>>,
+    errors: Vec<Sp<CompileError>>,
     code: String,
 }
 
@@ -247,7 +261,7 @@ impl Compilation {
                 );
                 let (pad, take) = if i == 0 {
                     if lines.len() == 1 {
-                        (start.col - 1, end.col - start.col + 1)
+                        (start.col - 1, (end.col + 1).saturating_sub(start.col))
                     } else {
                         (start.col - 1, line.len() - start.col)
                     }
