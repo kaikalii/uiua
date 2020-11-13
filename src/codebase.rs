@@ -4,6 +4,7 @@ use std::{
     error::Error,
     fs,
     io::{self, stdout, Write},
+    iter::repeat,
     path::{Path, PathBuf},
     sync::{mpsc, Arc, Mutex},
     thread,
@@ -44,11 +45,9 @@ impl CodeBase {
                     if let Some(diff) = pathdiff::diff_paths(&path, env::current_dir().unwrap()) {
                         if is_scratch_file(&path) {
                             match cb.handle_file_change(&path) {
-                                Ok(errors) => {
+                                Ok(comp) => {
                                     println!();
-                                    for e in errors {
-                                        println!("{} {}", e, diff.to_string_lossy());
-                                    }
+                                    comp.print_errors();
                                 }
                                 Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
                             }
@@ -60,10 +59,12 @@ impl CodeBase {
         });
         Ok(cb)
     }
-    fn handle_file_change(&self, path: &Path) -> Result<Vec<Sp<ResolutionError>>, Box<dyn Error>> {
+    fn handle_file_change(&self, path: &Path) -> Result<Compilation, Box<dyn Error>> {
         let mut defs = self.defs.lock().unwrap();
         *defs = Defs::default();
-        let mut unresolved_words: Vec<_> = parse::parse(fs::File::open(path)?)?
+        let path = path.to_path_buf();
+        let buffer = fs::read(&path)?;
+        let mut unresolved_words: Vec<_> = parse::parse(buffer.as_slice())?
             .into_iter()
             .map(|ud| (ud, None))
             .collect();
@@ -85,10 +86,14 @@ impl CodeBase {
             }
             last_len = unresolved_words.len();
         }
-        Ok(unresolved_words
-            .into_iter()
-            .filter_map(|(_, e)| e)
-            .collect())
+        Ok(Compilation {
+            path,
+            errors: unresolved_words
+                .into_iter()
+                .filter_map(|(_, e)| e)
+                .collect(),
+            code: String::from_utf8_lossy(&buffer).into_owned(),
+        })
     }
     pub fn dir(&self) -> PathBuf {
         self.path
@@ -206,5 +211,59 @@ where
         let hash = item.hash_finish();
         self.idents.insert(ident, hash);
         self.items.insert(hash, item);
+    }
+}
+
+struct Compilation {
+    path: PathBuf,
+    errors: Vec<Sp<ResolutionError>>,
+    code: String,
+}
+
+impl Compilation {
+    fn print_errors(&self) {
+        for error in &self.errors {
+            let start = error.span.start;
+            let end = error.span.end;
+            println!(
+                "{} at {} in {}",
+                "Error".bright_red(),
+                format!("{}:{}", start.line, start.col).bright_cyan(),
+                self.path.to_string_lossy().as_ref().blue(),
+            );
+            println!("{}", error.data);
+            let lines: Vec<_> = self
+                .code
+                .lines()
+                .skip(start.line - 1)
+                .take(end.line - start.line + 1)
+                .collect();
+            println!();
+            for (i, line) in lines.iter().enumerate() {
+                println!(
+                    "{:>3} {}",
+                    (i + start.line).to_string().bright_black(),
+                    line
+                );
+                let (pad, take) = if i == 0 {
+                    if lines.len() == 1 {
+                        (start.col - 1, end.col - start.col + 1)
+                    } else {
+                        (start.col - 1, line.len() - start.col)
+                    }
+                } else if i == lines.len() - 1 {
+                    (0, end.col)
+                } else {
+                    (0, line.len())
+                };
+                println!(
+                    "    {:pad$}{}",
+                    "",
+                    repeat('~').take(take).collect::<String>().bright_red(),
+                    pad = pad,
+                );
+            }
+            println!();
+        }
     }
 }

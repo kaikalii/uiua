@@ -140,27 +140,38 @@ where
     let mut tokens = Vec::new();
     let col = Cell::new(0);
     let line = Cell::new(1);
-    let mut chars = itertools::put_back(unicode_reader::CodePoints::from(input.bytes()).inspect(
-        |c| {
-            if let Ok(c) = c {
-                match c {
-                    '\n' => {
-                        col.set(0);
-                        line.set(line.get() + 1);
-                    }
-                    '\r' => col.set(0),
-                    _ => col.set(col.get() + 1),
-                }
-            }
-        },
-    ));
+    let mut put_back = None;
+    let mut chars = unicode_reader::CodePoints::from(input.bytes());
     let mut brackets = Vec::new();
     macro_rules! loc {
         () => {
             Loc::new(line.get(), col.get())
         };
     }
-    while let Some(c) = chars.next() {
+    macro_rules! next {
+        () => {
+            put_back.take().or_else(|| chars.next()).map(|c| {
+                if let Ok(c) = c {
+                    match c {
+                        '\n' => {
+                            col.set(0);
+                            line.set(line.get() + 1);
+                        }
+                        '\r' => col.set(0),
+                        _ => col.set(col.get() + 1),
+                    }
+                }
+                c
+            })
+        };
+    }
+    macro_rules! put_back {
+        ($c:expr) => {{
+            put_back = Some($c);
+            col.set(col.get().saturating_sub(1))
+        }};
+    }
+    while let Some(c) = next!() {
         let start = loc!();
         macro_rules! ok {
             ($res:expr) => {
@@ -172,14 +183,14 @@ where
             '"' => {
                 let mut s = String::new();
                 let mut closed = false;
-                while let Some(c) = chars.next() {
+                while let Some(c) = next!() {
                     match ok!(c) {
                         '"' => {
                             closed = true;
                             break;
                         }
                         '\\' => {
-                            if let Some(c) = chars.next() {
+                            if let Some(c) = next!() {
                                 s.push(ok!(escaped_char(ok!(c))));
                             }
                         }
@@ -201,7 +212,7 @@ where
                     .next()
                     .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start, loc!()))?);
                 if c == '\\' {
-                    c = ok!(escaped_char(ok!(chars.next().ok_or_else(|| {
+                    c = ok!(escaped_char(ok!(next!().ok_or_else(|| {
                         LexErrorKind::ExpectedCharacter.span(start, loc!())
                     })?)));
                 };
@@ -221,21 +232,21 @@ where
             c if c.is_digit(10) || c == '-' || c == '+' => {
                 let mut non_number = None;
                 if c == '-' {
-                    if let Some(next) = chars.next() {
+                    if let Some(next) = next!() {
                         let next = ok!(next);
                         if next == '-' {
                             // Check for fold
-                            if let Some(c) = chars.next() {
+                            if let Some(c) = next!() {
                                 if let Ok('-') = c {
                                     for _ in chars.by_ref() {}
                                     continue;
                                 } else {
-                                    chars.put_back(c);
+                                    put_back!(c);
                                 }
                             }
                             non_number = Some(TT::DoubleDash);
                         } else {
-                            chars.put_back(Ok(next));
+                            put_back!(Ok(next));
                         }
                     } else {
                         non_number = Some(TT::Ident("-".into()));
@@ -246,7 +257,7 @@ where
                 } else {
                     let mut s: String = c.into();
                     let mut period = false;
-                    while let Some(c) = chars.next() {
+                    while let Some(c) = next!() {
                         let c = ok!(c);
                         if c.is_digit(10) || c == '.' && !period {
                             if c == '.' {
@@ -254,7 +265,7 @@ where
                             }
                             s.push(c);
                         } else {
-                            chars.put_back(Ok(c));
+                            put_back!(Ok(c));
                             break;
                         }
                     }
@@ -314,18 +325,18 @@ where
             }
             ':' => TT::Colon,
             ';' => TT::SemiColon,
-            '~' => TT::SemiColon,
+            '~' => TT::Tilde,
             '.' => TT::Period,
             c if c.is_whitespace() => continue,
             // Idents and others
             c if ident_char(c) => {
                 let mut s: String = c.into();
-                while let Some(c) = chars.next() {
+                while let Some(c) = next!() {
                     let c = ok!(c);
                     if ident_char(c) {
                         s.push(c);
                     } else {
-                        chars.put_back(Ok(c));
+                        put_back!(Ok(c));
                         break;
                     }
                 }

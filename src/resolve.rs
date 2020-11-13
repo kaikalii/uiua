@@ -1,3 +1,5 @@
+use itertools::*;
+
 use crate::{ast::*, codebase::*, span::*, types::*};
 
 pub fn resolve_word(def: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
@@ -31,7 +33,7 @@ pub fn resolve_sequence(
                     resolved_nodes.push(node.span.sp(Node::Ident(*hash)));
                 } else if ident.single_and_eq("?") {
                     if i == 0 {
-                        return Err(node.span.sp(ResolutionError::CallAtStart));
+                        return Err(node.span.sp(ResolutionError::IfAtStart));
                     } else {
                         let sig = seq_sig(&resolved_nodes, defs, None, name)?;
                         if let Some(last) = sig.after.last() {
@@ -62,7 +64,7 @@ pub fn resolve_sequence(
                     }
                 } else if ident.single_and_eq("!") {
                     if i == 0 {
-                        return Err(node.span.sp(ResolutionError::IfAtStart));
+                        return Err(node.span.sp(ResolutionError::CallAtStart));
                     } else {
                         let sig = seq_sig(&resolved_nodes, defs, None, name)?;
                         if let Some(last) = sig.after.last() {
@@ -174,15 +176,22 @@ pub fn seq_sig(
     nodes: &[Sp<Node>],
     defs: &Defs,
     given: Option<&Sp<Signature>>,
-    name: &Sp<Ident>,
+    ident: &Sp<Ident>,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     let mut iter = nodes.iter();
     let sig = if let Some(node) = iter.next() {
-        let mut sig = node_sig(node, defs, given, name)?;
+        let mut sig = node_sig(node, defs, given, ident)?;
         for node in iter {
-            sig = node.span.sp(sig
-                .compose(&*node_sig(node, defs, given, name)?)
-                .map_err(|e| node.span.sp(e.into()))?);
+            let next_sig = node_sig(node, defs, given, ident)?;
+            sig = node.span.sp(sig.compose(&*next_sig).map_err(|e| {
+                node.span.sp(match e {
+                    TypeError::Mismatch { .. } => ResolutionError::TypeMismatch {
+                        ident: ident.data.clone(),
+                        expected: next_sig.data.clone(),
+                        found: sig.data.clone(),
+                    },
+                })
+            })?);
         }
         sig
     } else {
@@ -191,6 +200,7 @@ pub fn seq_sig(
     if let Some(given) = given {
         if given != &sig {
             return Err(given.span.sp(ResolutionError::SignatureMismatch {
+                ident: ident.data.clone(),
                 expected: given.data.clone(),
                 found: sig.data,
             }));
@@ -203,7 +213,7 @@ pub fn node_sig(
     node: &Sp<Node>,
     defs: &Defs,
     self_sig: Option<&Sp<Signature>>,
-    name: &Sp<Ident>,
+    ident: &Sp<Ident>,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     match &node.data {
         Node::Ident(hash) => {
@@ -213,10 +223,10 @@ pub fn node_sig(
         }
         Node::SelfIdent => self_sig
             .cloned()
-            .ok_or_else(|| name.clone().map(ResolutionError::RecursiveNoSignature)),
+            .ok_or_else(|| ident.clone().map(ResolutionError::RecursiveNoSignature)),
         Node::Quotation(nodes) => Ok(node.span.sp(Signature::new(
             vec![],
-            vec![Primitive::Quotation(seq_sig(nodes, defs, None, name)?.data).into()],
+            vec![Primitive::Quotation(seq_sig(nodes, defs, None, ident)?.data).into()],
         ))),
         Node::Literal(lit) => Ok(node
             .span
@@ -226,14 +236,28 @@ pub fn node_sig(
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolutionError {
-    #[error("{0}")]
-    Type(#[from] TypeError),
-    #[error("Unknown name \"{0}\"")]
+    #[error(
+        "{ident} expects an input state ({}),\n\
+        but the words before it have output state ({})",
+        format_state(&expected.before),
+        format_state(&found.after)
+    )]
+    TypeMismatch {
+        ident: Ident,
+        expected: Signature,
+        found: Signature,
+    },
+    #[error("Unknown word \"{0}\"")]
     Unknown(Ident),
     #[error("Rescursive definition {0:?} must have an explicit type signature")]
     RecursiveNoSignature(Ident),
-    #[error("Expected signature {expected}, but found {found}")]
+    #[error(
+        "Signature mismatch \n\
+        {ident} is annoteted with the signature {expected},\n\
+        but its body resolves to {found}"
+    )]
     SignatureMismatch {
+        ident: Ident,
         expected: Signature,
         found: Signature,
     },
@@ -243,4 +267,12 @@ pub enum ResolutionError {
     IfAtStart,
     #[error("Expected quotation, found {found}")]
     ExpectedQuotation { found: Type },
+}
+
+fn format_state(types: &[Type]) -> String {
+    types
+        .iter()
+        .map(ToString::to_string)
+        .intersperse(" ".into())
+        .collect()
 }
