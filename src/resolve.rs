@@ -35,7 +35,7 @@ pub fn resolve_sequence(
                     } else {
                         let sig = seq_sig(&resolved_nodes, defs, None, name)?;
                         if let Some(last) = sig.after.last() {
-                            if let Type::Prim(Primitive::Op(sig)) = last {
+                            if let Type::Prim(Primitive::Quotation(sig)) = last {
                                 resolved_nodes.push(
                                     node.span.sp(Node::Ident(
                                         *defs
@@ -65,7 +65,7 @@ pub fn resolve_sequence(
                     } else {
                         let sig = seq_sig(&resolved_nodes, defs, None, name)?;
                         if let Some(last) = sig.after.last() {
-                            if let Type::Prim(Primitive::Op(sig)) = last {
+                            if let Type::Prim(Primitive::Quotation(sig)) = last {
                                 resolved_nodes.push(
                                     node.span.sp(Node::Ident(
                                         *defs
@@ -162,7 +162,9 @@ pub fn resolve_prim(
         Primitive::Char => Primitive::Char,
         Primitive::Text => Primitive::Text,
         Primitive::List(ty) => Primitive::List(Box::new(resolve_type(ty, defs, params)?)),
-        Primitive::Op(sig) => Primitive::Op(resolve_sig(&span.sp(sig.clone()), defs, params)?.data),
+        Primitive::Quotation(sig) => {
+            Primitive::Quotation(resolve_sig(&span.sp(sig.clone()), defs, params)?.data)
+        }
     })
 }
 
@@ -212,7 +214,7 @@ pub fn node_sig(
             .ok_or_else(|| name.clone().map(ResolutionError::RecursiveNoSignature)),
         Node::Defered(nodes) => Ok(node.span.sp(Signature::new(
             vec![],
-            vec![Primitive::Op(seq_sig(nodes, defs, None, name)?.data).into()],
+            vec![Primitive::Quotation(seq_sig(nodes, defs, None, name)?.data).into()],
         ))),
         Node::Literal(lit) => Ok(node
             .span

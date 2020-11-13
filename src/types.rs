@@ -32,7 +32,7 @@ impl Type {
             Type::Generic(g) => vec![g.index],
             Type::Prim(prim) => match prim {
                 Primitive::List(inner) => inner.generics(),
-                Primitive::Op(sig) => sig
+                Primitive::Quotation(sig) => sig
                     .before
                     .iter()
                     .flat_map(Type::generics)
@@ -105,7 +105,7 @@ pub enum Primitive<T = Type, B = TypeParams> {
     Char,
     Text,
     List(Box<T>),
-    Op(Signature<T, B>),
+    Quotation(Signature<T, B>),
 }
 
 pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>, Option<UnresolvedTypeParams>>;
@@ -121,7 +121,7 @@ impl Primitive {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
             Primitive::List(inner) => inner.hash(sha),
-            Primitive::Op(sig) => {
+            Primitive::Quotation(sig) => {
                 sha.update(sig.before.len().to_le_bytes());
                 sha.update(sig.after.len().to_le_bytes());
                 for ty in &sig.before {
@@ -150,7 +150,7 @@ where
             Primitive::Char => write!(f, "Char"),
             Primitive::Text => write!(f, "Text"),
             Primitive::List(inner) => write!(f, "[{}]", inner),
-            Primitive::Op(sig) => fmt::Display::fmt(sig, f),
+            Primitive::Quotation(sig) => fmt::Display::fmt(sig, f),
         }
     }
 }
@@ -320,7 +320,7 @@ fn trade_generics(a: &mut Type, b: &mut Type, resolver: &mut TypeResolver) {
         }
         (Type::Prim(a), Type::Prim(b)) => match (a, b) {
             (Primitive::List(a), Primitive::List(b)) => trade_generics(a, b, resolver),
-            (Primitive::Op(a), Primitive::Op(b)) => {
+            (Primitive::Quotation(a), Primitive::Quotation(b)) => {
                 for (a, b) in a.before.iter_mut().rev().zip(b.before.iter_mut().rev()) {
                     trade_generics(a, b, resolver);
                 }
@@ -412,7 +412,7 @@ where
     match ty {
         Type::Prim(prim) => match prim {
             Primitive::List(inner) => transform_type(inner, f),
-            Primitive::Op(sig) => {
+            Primitive::Quotation(sig) => {
                 for ty in &mut sig.before {
                     transform_type(ty, f)
                 }

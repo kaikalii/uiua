@@ -86,7 +86,7 @@ impl BuiltinDef {
                 (
                     before
                         .into_iter()
-                        .chain(once(Primitive::Op(inner).into()))
+                        .chain(once(Primitive::Quotation(inner).into()))
                         .collect(),
                     after,
                 )
@@ -100,8 +100,8 @@ impl BuiltinDef {
                     before
                         .into_iter()
                         .chain(once(Primitive::Bool.into()))
-                        .chain(once(Primitive::Op(inner.clone()).into()))
-                        .chain(once(Primitive::Op(inner).into()))
+                        .chain(once(Primitive::Quotation(inner.clone()).into()))
+                        .chain(once(Primitive::Quotation(inner).into()))
                         .collect(),
                     after,
                 )

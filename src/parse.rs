@@ -94,7 +94,7 @@ impl Parser {
                 return self.expected("type");
             }
         } else if let Some(sig) = self.sig(None)? {
-            Some(sig.map(|sig| UnresolvedType::Prim(Primitive::Op(sig))))
+            Some(sig.map(|sig| UnresolvedType::Prim(Primitive::Quotation(sig))))
         } else {
             return Ok(None);
         })
