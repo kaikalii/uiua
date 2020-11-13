@@ -7,7 +7,7 @@ pub fn resolve_def(def: &Sp<UnresolvedDef>, defs: &Defs) -> SpResult<Def, Resolu
         None
     };
     let given_sig = given_sig.as_ref();
-    let nodes = resolve_sequence(&def.nodes, defs, Some(&def.name), given_sig.map(Sp::as_ref))?;
+    let nodes = resolve_sequence(&def.nodes, defs, &def.name, given_sig.map(Sp::as_ref))?;
     let sig = seq_sig(&nodes, defs, given_sig, &def.name)?;
     Ok(Def {
         sig: sig.data,
@@ -18,17 +18,77 @@ pub fn resolve_def(def: &Sp<UnresolvedDef>, defs: &Defs) -> SpResult<Def, Resolu
 pub fn resolve_sequence(
     nodes: &[Sp<UnresolvedNode>],
     defs: &Defs,
-    name: Option<&str>,
+    name: &Sp<String>,
     _sig: Option<Sp<&Signature>>,
 ) -> SpResult<Vec<Sp<Node>>, ResolutionError> {
     let mut resolved_nodes = Vec::new();
-    for node in nodes {
+    for (i, node) in nodes.iter().enumerate() {
         match &node.data {
             UnresolvedNode::Ident(s) => {
-                if name.map_or(false, |n| n == s) {
+                if &name.data == s {
                     resolved_nodes.push(node.span.sp(Node::SelfIdent));
                 } else if let Some((hash, _)) = defs.def_by_name(s) {
                     resolved_nodes.push(node.span.sp(Node::Ident(*hash)));
+                } else if s == "?" {
+                    if i == 0 {
+                        return Err(node.span.sp(ResolutionError::CallAtStart));
+                    } else {
+                        let sig = seq_sig(&resolved_nodes, defs, None, name)?;
+                        if let Some(last) = sig.after.last() {
+                            if let Type::Prim(Primitive::Op(sig)) = last {
+                                resolved_nodes.push(
+                                    node.span.sp(Node::Ident(
+                                        *defs
+                                            .def_by_name(&format!(
+                                                "?{}--{}",
+                                                sig.before.len(),
+                                                sig.after.len()
+                                            ))
+                                            .unwrap()
+                                            .0,
+                                    )),
+                                );
+                            } else {
+                                return Err(node.span.sp(ResolutionError::ExpectedQuotation {
+                                    found: last.clone(),
+                                }));
+                            }
+                        } else {
+                            return Err(node.span.sp(ResolutionError::ExpectedQuotation {
+                                found: Primitive::Unit.into(),
+                            }));
+                        }
+                    }
+                } else if s == "!" {
+                    if i == 0 {
+                        return Err(node.span.sp(ResolutionError::IfAtStart));
+                    } else {
+                        let sig = seq_sig(&resolved_nodes, defs, None, name)?;
+                        if let Some(last) = sig.after.last() {
+                            if let Type::Prim(Primitive::Op(sig)) = last {
+                                resolved_nodes.push(
+                                    node.span.sp(Node::Ident(
+                                        *defs
+                                            .def_by_name(&format!(
+                                                "!{}--{}",
+                                                sig.before.len(),
+                                                sig.after.len()
+                                            ))
+                                            .unwrap()
+                                            .0,
+                                    )),
+                                );
+                            } else {
+                                return Err(node.span.sp(ResolutionError::ExpectedQuotation {
+                                    found: last.clone(),
+                                }));
+                            }
+                        } else {
+                            return Err(node.span.sp(ResolutionError::ExpectedQuotation {
+                                found: Primitive::Unit.into(),
+                            }));
+                        }
+                    }
                 } else {
                     return Err(node.span.sp(ResolutionError::Unknown(s.clone())));
                 }
@@ -37,7 +97,7 @@ pub fn resolve_sequence(
                 resolved_nodes.push(node.span.sp(Node::Literal(lit.clone())))
             }
             UnresolvedNode::Defered(sub_nodes) => resolved_nodes.push(node.span.sp(Node::Defered(
-                resolve_sequence(sub_nodes, defs, None, None)?,
+                resolve_sequence(sub_nodes, defs, name, None)?,
             ))),
         }
     }
@@ -94,6 +154,7 @@ pub fn resolve_prim(
     params: &Option<UnresolvedTypeParams>,
 ) -> SpResult<Primitive, ResolutionError> {
     Ok(match prim {
+        Primitive::Unit => Primitive::Unit,
         Primitive::Bool => Primitive::Bool,
         Primitive::Nat => Primitive::Nat,
         Primitive::Int => Primitive::Int,
@@ -172,4 +233,10 @@ pub enum ResolutionError {
         expected: Signature,
         found: Signature,
     },
+    #[error("Unenumerated calls cannot be at the beginning of a definition")]
+    CallAtStart,
+    #[error("Unenumerated if's cannot be at the beginning of a definition")]
+    IfAtStart,
+    #[error("Expected quotation, found {found}")]
+    ExpectedQuotation { found: Type },
 }

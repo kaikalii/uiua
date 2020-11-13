@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fmt, mem};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeSet, HashMap},
+    fmt, mem,
+};
 
 use sha3::*;
 
@@ -58,7 +62,7 @@ impl fmt::Display for Type {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct Generic {
     pub name: String,
     pub index: u8,
@@ -73,8 +77,27 @@ impl Generic {
     }
 }
 
+impl PartialEq for Generic {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+
+impl PartialOrd for Generic {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.index.partial_cmp(&other.index)
+    }
+}
+
+impl Ord for Generic {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.index.cmp(&other.index)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Primitive<T = Type, B = TypeParams> {
+    Unit,
     Bool,
     Nat,
     Int,
@@ -119,6 +142,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Primitive::Unit => write!(f, "()"),
             Primitive::Bool => write!(f, "Bool"),
             Primitive::Nat => write!(f, "Nat"),
             Primitive::Int => write!(f, "Int"),
@@ -214,6 +238,7 @@ impl Signature {
                 }
             });
         }
+        let mut resolver = TypeResolver::default();
         // Loop over the reversed outputs of a zipped with the reversed inputs of b
         let mut i = 0;
         loop {
@@ -225,28 +250,25 @@ impl Signature {
                 let b_len = b.before.len();
                 let a_after = &mut a.after[a_len - 1 - i];
                 let b_before = &mut b.before[b_len - 1 - i];
-                let mut conv = Vec::new();
                 if a_after != b_before && a_after.generics() == b_before.generics() {
                     return Err(TypeError::Mismatch {
                         expected: b_before.clone(),
                         found: a_after.clone(),
                     });
                 }
-                trade_generics(a_after, b_before, &mut conv);
-                for (g, new) in conv {
-                    // println!("{} -> {}", g, new);
-                    for ty in &mut a.before {
-                        set_generic(ty, g, &new);
-                    }
-                    for ty in &mut a.after {
-                        set_generic(ty, g, &new);
-                    }
-                    for ty in &mut b.before {
-                        set_generic(ty, g, &new);
-                    }
-                    for ty in &mut b.after {
-                        set_generic(ty, g, &new);
-                    }
+                trade_generics(a_after, b_before, &mut resolver);
+                // println!("{:?}", resolver);
+                for ty in &mut a.before {
+                    resolver.resolve(ty);
+                }
+                for ty in &mut a.after {
+                    resolver.resolve(ty);
+                }
+                for ty in &mut b.before {
+                    resolver.resolve(ty);
+                }
+                for ty in &mut b.after {
+                    resolver.resolve(ty);
                 }
                 // println!("a {}", a);
                 // println!("b {}", b);
@@ -284,23 +306,91 @@ impl Signature {
     }
 }
 
-fn trade_generics(a: &mut Type, b: &mut Type, conv: &mut Vec<(u8, Type)>) {
+fn trade_generics(a: &mut Type, b: &mut Type, resolver: &mut TypeResolver) {
     match (a, b) {
-        (Type::Generic(a), Type::Generic(b)) => conv.push((b.index, Type::Generic(a.clone()))),
-        (Type::Generic(a), ref b) => conv.push((a.index, (*b).clone())),
-        (ref a, Type::Generic(b)) => conv.push((b.index, (*a).clone())),
+        (Type::Generic(a), Type::Generic(b)) => {
+            resolver.insert(b.clone(), &Type::Generic(a.clone()));
+            resolver.insert(a.clone(), &Type::Generic(b.clone()));
+        }
+        (Type::Generic(a), ref b) => {
+            resolver.insert(a.clone(), b);
+        }
+        (ref a, Type::Generic(b)) => {
+            resolver.insert(b.clone(), a);
+        }
         (Type::Prim(a), Type::Prim(b)) => match (a, b) {
-            (Primitive::List(a), Primitive::List(b)) => trade_generics(a, b, conv),
+            (Primitive::List(a), Primitive::List(b)) => trade_generics(a, b, resolver),
             (Primitive::Op(a), Primitive::Op(b)) => {
                 for (a, b) in a.before.iter_mut().rev().zip(b.before.iter_mut().rev()) {
-                    trade_generics(a, b, conv);
+                    trade_generics(a, b, resolver);
                 }
                 for (a, b) in a.after.iter_mut().rev().zip(b.after.iter_mut().rev()) {
-                    trade_generics(a, b, conv);
+                    trade_generics(a, b, resolver);
                 }
             }
             _ => {}
         },
+    }
+}
+
+#[derive(Debug, Default)]
+struct TypeResolver(Vec<(BTreeSet<Generic>, Option<Type>)>);
+
+impl TypeResolver {
+    fn insert(&mut self, a: Generic, ty: &Type) {
+        if let Type::Generic(b) = ty {
+            let a_buc = self.0.iter().position(|(buc, _)| buc.contains(&a));
+            let b_buc = self.0.iter().position(|(buc, _)| buc.contains(&b));
+            if let Some((a, b)) = a_buc.zip(b_buc) {
+                if a != b {
+                    let combined = a.min(b);
+                    let mut removed = self.0.remove(a.max(b));
+                    self.0[combined].0.append(&mut removed.0);
+                    if self.0[combined].1.is_none() {
+                        self.0[combined].1 = removed.1;
+                    }
+                }
+            } else if let Some(a) = a_buc {
+                self.0[a].0.insert(b.clone());
+            } else if let Some(b) = b_buc {
+                self.0[b].0.insert(a);
+            } else {
+                let mut bucket = BTreeSet::new();
+                bucket.insert(a);
+                bucket.insert(b.clone());
+                self.0.push((bucket, None));
+            }
+        } else if let Some((bucket, concrete @ None)) =
+            self.0.iter_mut().find(|(buc, _)| buc.contains(&a))
+        {
+            bucket.insert(a);
+            *concrete = Some(ty.clone());
+        } else {
+            let mut bucket = BTreeSet::new();
+            bucket.insert(a);
+            self.0.push((bucket, Some(ty.clone())));
+        }
+    }
+    fn get(&self, g: &Generic) -> Option<Type> {
+        self.0
+            .iter()
+            .find(|(buc, _)| buc.contains(g))
+            .map(|(buc, ty)| {
+                if let Some(ty) = ty {
+                    ty.clone()
+                } else {
+                    Type::Generic(buc.iter().max().unwrap().clone())
+                }
+            })
+    }
+    fn resolve(&mut self, ty: &mut Type) {
+        transform_type(ty, &mut |ty| {
+            if let Type::Generic(g) = ty {
+                if let Some(new) = self.get(g) {
+                    *ty = new;
+                }
+            }
+        })
     }
 }
 
