@@ -13,7 +13,7 @@ use std::{
 use colored::*;
 use notify::{self, watcher, DebouncedEvent, RecursiveMode, Watcher};
 
-use crate::{ast::*, builtin::*, parse, resolve, types::*};
+use crate::{ast::*, builtin::*, parse, resolve::*, span::*, types::*};
 
 #[derive(Clone)]
 pub struct CodeBase {
@@ -41,13 +41,18 @@ impl CodeBase {
             for event in event_recv {
                 if let DebouncedEvent::Write(path) = event {
                     // Handle file change
-                    if let Err(e) = cb.handle_file_change(&path) {
-                        if let Some(diff) = pathdiff::diff_paths(path, env::current_dir().unwrap())
-                        {
-                            if !diff.starts_with(".git") {
-                                println!("\n{} {}", e, diff.to_string_lossy());
-                                cb.print_path_prompt();
+                    if let Some(diff) = pathdiff::diff_paths(&path, env::current_dir().unwrap()) {
+                        if !diff.starts_with(".git") {
+                            match cb.handle_file_change(&path) {
+                                Ok(errors) => {
+                                    println!();
+                                    for e in errors {
+                                        println!("{} {}", e, diff.to_string_lossy());
+                                    }
+                                }
+                                Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
                             }
+                            cb.print_path_prompt();
                         }
                     }
                 }
@@ -55,15 +60,31 @@ impl CodeBase {
         });
         Ok(cb)
     }
-    fn handle_file_change(&self, path: &Path) -> Result<(), Box<dyn Error>> {
-        for unresolved_def in parse::parse(fs::File::open(path)?)? {
-            let mut defs = self.defs.lock().unwrap();
-            let def = resolve::resolve_def(&unresolved_def, &defs)?;
-            println!("{}", def.sig);
-            defs.insert_def(unresolved_def.data.name.data, def);
-            self.print_path_prompt();
+    fn handle_file_change(&self, path: &Path) -> Result<Vec<Sp<ResolutionError>>, Box<dyn Error>> {
+        let mut defs = self.defs.lock().unwrap();
+        let mut unresolved_defs: Vec<_> = parse::parse(fs::File::open(path)?)?
+            .into_iter()
+            .map(|ud| (ud, None))
+            .collect();
+        let mut last_len = 0;
+        loop {
+            unresolved_defs = unresolved_defs
+                .into_iter()
+                .filter_map(|(unresolved, _)| match resolve_def(&unresolved, &defs) {
+                    Ok(def) => {
+                        println!("{}: {}", unresolved.data.name.data, def.sig);
+                        defs.insert_def(unresolved.data.name.data, def);
+                        None
+                    }
+                    Err(e) => Some((unresolved, Some(e))),
+                })
+                .collect();
+            if unresolved_defs.len() == last_len {
+                break;
+            }
+            last_len = unresolved_defs.len();
         }
-        Ok(())
+        Ok(unresolved_defs.into_iter().filter_map(|(_, e)| e).collect())
     }
     pub fn dir(&self) -> PathBuf {
         self.path
