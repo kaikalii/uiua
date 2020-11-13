@@ -72,7 +72,7 @@ impl CodeBase {
                 .into_iter()
                 .filter_map(|(unresolved, _)| match resolve_def(&unresolved, &defs) {
                     Ok(def) => {
-                        println!("{}: {}", unresolved.data.name.data, def.sig);
+                        println!("{} {}", unresolved.data.name.data, def.sig);
                         defs.insert_def(unresolved.data.name.data, def);
                         None
                     }
@@ -115,8 +115,6 @@ impl CodeBase {
                 name => path.push(name.into()),
             }
         }
-        drop(path);
-        fs::create_dir_all(self.dir())?;
         Ok(())
     }
 }

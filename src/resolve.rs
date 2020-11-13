@@ -2,7 +2,7 @@ use crate::{ast::*, codebase::*, span::*, types::*};
 
 pub fn resolve_def(def: &Sp<UnresolvedDef>, defs: &Defs) -> SpResult<Def, ResolutionError> {
     let given_sig = if let Some(sig) = &def.sig {
-        Some(resolve_sig(sig, defs)?)
+        Some(resolve_sig(sig, defs, &sig.bounds)?)
     } else {
         None
     };
@@ -47,6 +47,7 @@ pub fn resolve_sequence(
 pub fn resolve_sig(
     sig: &UnresolvedSignature,
     defs: &Defs,
+    params: &Option<UnresolvedTypeParams>,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     let mut resolved_before = Vec::new();
     let mut resolved_after = Vec::new();
@@ -55,23 +56,27 @@ pub fn resolve_sig(
         (&sig.after, &mut resolved_after),
     ] {
         for unresolved in *unresolved {
-            if let (Some(type_params), UnresolvedType::Ident(name)) = (&sig.bounds, &**unresolved) {
+            if let (Some(type_params), UnresolvedType::Ident(name)) = (params, &**unresolved) {
                 if let Some(i) = type_params.iter().position(|n| &**n == name) {
                     resolved.push(Type::Generic(Generic::new(name, i as u8)));
                 } else {
-                    resolved.push(resolve_type(unresolved, defs)?);
+                    resolved.push(resolve_type(unresolved, defs, params)?);
                 }
             } else {
-                resolved.push(resolve_type(unresolved, defs)?);
+                resolved.push(resolve_type(unresolved, defs, params)?);
             }
         }
     }
     Ok(sig.span.sp(Signature::new(resolved_before, resolved_after)))
 }
 
-pub fn resolve_type(ty: &Sp<UnresolvedType>, defs: &Defs) -> SpResult<Type, ResolutionError> {
+pub fn resolve_type(
+    ty: &Sp<UnresolvedType>,
+    defs: &Defs,
+    params: &Option<UnresolvedTypeParams>,
+) -> SpResult<Type, ResolutionError> {
     match &ty.data {
-        UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span)?)),
+        UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
         UnresolvedType::Ident(name) => {
             if let Some((_, ty)) = defs.type_by_name(name) {
                 Ok(ty.clone())
@@ -86,6 +91,7 @@ pub fn resolve_prim(
     prim: &UnresolvedPrimitive,
     defs: &Defs,
     span: Span,
+    params: &Option<UnresolvedTypeParams>,
 ) -> SpResult<Primitive, ResolutionError> {
     Ok(match prim {
         Primitive::Bool => Primitive::Bool,
@@ -94,8 +100,8 @@ pub fn resolve_prim(
         Primitive::Float => Primitive::Float,
         Primitive::Char => Primitive::Char,
         Primitive::Text => Primitive::Text,
-        Primitive::List(ty) => Primitive::List(Box::new(resolve_type(ty, defs)?)),
-        Primitive::Op(sig) => Primitive::Op(resolve_sig(&span.sp(sig.clone()), defs)?.data),
+        Primitive::List(ty) => Primitive::List(Box::new(resolve_type(ty, defs, params)?)),
+        Primitive::Op(sig) => Primitive::Op(resolve_sig(&span.sp(sig.clone()), defs, params)?.data),
     })
 }
 
