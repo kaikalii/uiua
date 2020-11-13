@@ -24,6 +24,8 @@ builtin!(
     App,
     /// Swap the top 2 items
     Swap,
+    /// Add 2 items
+    Add,
 );
 
 fn generic_list() -> Type {
@@ -49,6 +51,7 @@ impl Builtin {
             Builtin::List => (vec![], vec![generic_list()]),
             Builtin::App => (vec![generic_list(), t()], vec![generic_list()]),
             Builtin::Swap => (vec![t(), u()], vec![u(), t()]),
+            Builtin::Add => (vec![t(); 2], vec![t()]),
         };
         Signature::new(before, after)
     }
@@ -58,6 +61,7 @@ impl Builtin {
             Builtin::List => "list",
             Builtin::App => "app",
             Builtin::Swap => "swap",
+            Builtin::Add => "+",
         }
     }
 }

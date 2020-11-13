@@ -218,28 +218,30 @@ where
             }
             // Num literals or double dash
             c if c.is_digit(10) || c == '-' || c == '+' => {
-                let mut double_dash = false;
+                let mut non_number = None;
                 if c == '-' {
-                    let next = ok!(chars
-                        .next()
-                        .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start, loc!()))?);
-                    if next == '-' {
-                        // Check for fold
-                        if let Some(c) = chars.next() {
-                            if let Ok('-') = c {
-                                for _ in chars.by_ref() {}
-                                continue;
-                            } else {
-                                chars.put_back(c);
+                    if let Some(next) = chars.next() {
+                        let next = ok!(next);
+                        if next == '-' {
+                            // Check for fold
+                            if let Some(c) = chars.next() {
+                                if let Ok('-') = c {
+                                    for _ in chars.by_ref() {}
+                                    continue;
+                                } else {
+                                    chars.put_back(c);
+                                }
                             }
+                            non_number = Some(TT::DoubleDash);
+                        } else {
+                            chars.put_back(Ok(next));
                         }
-                        double_dash = true;
                     } else {
-                        chars.put_back(Ok(next));
+                        non_number = Some(TT::Ident("-".into()));
                     }
                 }
-                if double_dash {
-                    TT::DoubleDash
+                if let Some(tt) = non_number {
+                    tt
                 } else {
                     let mut s: String = c.into();
                     let mut period = false;
@@ -255,7 +257,9 @@ where
                             break;
                         }
                     }
-                    if period {
+                    if s == "-" || s == "+" {
+                        TT::Ident(s)
+                    } else if period {
                         TT::Float(ok!(s.parse()))
                     } else if s.starts_with('-') || s.starts_with('+') {
                         TT::Int(ok!(s.parse()))
