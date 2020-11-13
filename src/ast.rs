@@ -40,6 +40,7 @@ impl Def {
             }
             DefKind::Builtin(bi) => {
                 sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(bi)) });
+                sha.update(unsafe { mem::transmute::<_, [u8; 3]>(*bi) });
             }
         }
         Hash(sha.finalize())
