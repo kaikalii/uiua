@@ -1,5 +1,4 @@
 use std::{
-    cell::Cell,
     fmt,
     io::{self, Read},
 };
@@ -135,65 +134,56 @@ fn found_char(found: Option<char>) -> String {
     }
 }
 
-pub fn lex<R>(input: R) -> Result<Vec<Token>, LexError>
+struct Lexer<R>
 where
     R: Read,
 {
-    let mut tokens = Vec::new();
-    let col = Cell::new(0);
-    let line = Cell::new(1);
-    let mut put_back = None;
-    let mut chars = unicode_reader::CodePoints::from(input.bytes());
-    let mut brackets = Vec::new();
-    macro_rules! loc {
-        () => {
-            Loc::new(line.get(), col.get())
-        };
+    tokens: Vec<Token>,
+    chars: unicode_reader::CodePoints<io::Bytes<R>>,
+    brackets: Vec<char>,
+    loc: Loc,
+    start: Loc,
+}
+
+impl<R> Lexer<R>
+where
+    R: Read,
+{
+    fn next_char(&mut self) -> Result<char, LexError> {
+        self.try_next_char()
+            .unwrap_or_else(|| Err(LexErrorKind::ExpectedCharacter.span(self.start, self.loc)))
     }
-    macro_rules! next {
-        () => {
-            put_back.take().or_else(|| chars.next()).map(|c| {
-                if let Ok(c) = c {
-                    match c {
-                        '\n' => {
-                            col.set(0);
-                            line.set(line.get() + 1);
-                        }
-                        '\r' => col.set(0),
-                        _ => col.set(col.get() + 1),
-                    }
+    fn try_next_char(&mut self) -> Option<Result<char, LexError>> {
+        self.chars.next().map(|res| {
+            match res {
+                Ok('\n') => {
+                    self.loc.line += 1;
+                    self.loc.col = 0;
                 }
-                c
-            })
-        };
+                Ok('\r') => {}
+                Ok(_) => self.loc.col += 1,
+                Err(_) => {}
+            }
+            self.span_res(res)
+        })
     }
-    macro_rules! put_back {
-        ($c:expr) => {{
-            put_back = Some($c);
-            col.set(col.get().saturating_sub(1))
-        }};
-    }
-    while let Some(c) = next!() {
-        let start = loc!();
-        macro_rules! ok {
-            ($res:expr) => {
-                $res.map_err(|e| LexErrorKind::from(e).span(start, loc!()))?
-            };
-        }
-        let tt = match ok!(c) {
+    fn handle_char(&mut self, c: Result<char, LexError>) -> Result<(), LexError> {
+        self.start = self.loc;
+        let c = c?;
+        let tt = match c {
             // String literals
             '"' => {
                 let mut s = String::new();
                 let mut closed = false;
-                while let Some(c) = next!() {
-                    match ok!(c) {
+                while let Some(c) = self.try_next_char() {
+                    match c? {
                         '"' => {
                             closed = true;
                             break;
                         }
                         '\\' => {
-                            if let Some(c) = next!() {
-                                s.push(ok!(escaped_char(ok!(c))));
+                            if let Some(c) = self.try_next_char() {
+                                s.push(escaped_char(c?).map_err(|e| e.span(self.start, self.loc))?);
                             }
                         }
                         c => s.push(c),
@@ -204,29 +194,23 @@ where
                         expected: '"',
                         found: None,
                     }
-                    .span(start, loc!()));
+                    .span(self.start, self.loc));
                 }
                 TT::Text(s)
             }
             // Character literals
             c if c == '\'' => {
-                let mut c = ok!(chars
-                    .next()
-                    .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start, loc!()))?);
+                let mut c = self.next_char()?;
                 if c == '\\' {
-                    c = ok!(escaped_char(ok!(next!().ok_or_else(|| {
-                        LexErrorKind::ExpectedCharacter.span(start, loc!())
-                    })?)));
+                    c = self.next_char()?;
                 };
-                let next = ok!(chars
-                    .next()
-                    .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start, loc!()))?);
+                let next = self.next_char()?;
                 if next != '\'' {
                     return Err(LexErrorKind::Expected {
                         expected: '\'',
                         found: Some(next),
                     }
-                    .span(start, loc!()));
+                    .span(self.start, self.loc));
                 }
                 TT::Char(c)
             }
@@ -234,94 +218,74 @@ where
             c if c.is_digit(10) || c == '-' || c == '+' => {
                 let mut non_number = None;
                 if c == '-' {
-                    if let Some(next) = next!() {
-                        let next = ok!(next);
+                    if let Some(next) = self.try_next_char() {
+                        let next = next?;
                         if next == '-' {
                             // Check for fold
-                            if let Some(c) = next!() {
-                                if let Ok('-') = c {
-                                    for _ in chars.by_ref() {}
-                                    continue;
+                            if let Some(c) = self.try_next_char() {
+                                let c = c?;
+                                if c == '-' {
+                                    for _ in self.chars.by_ref() {}
+                                    return Ok(());
                                 } else {
-                                    put_back!(c);
+                                    let tt = self.finish_number(c, Some(TT::DoubleDash))?;
+                                    self.push_tt(tt);
+                                    self.handle_char(Ok(c))?;
+                                    return Ok(());
                                 }
                             }
-                            non_number = Some(TT::DoubleDash);
                         } else {
-                            put_back!(Ok(next));
+                            let tt = self.finish_number(c, non_number)?;
+                            self.push_tt(tt);
+                            self.handle_char(Ok(next))?;
+                            return Ok(());
                         }
                     } else {
                         non_number = Some(TT::Ident("-".into()));
                     }
                 }
-                if let Some(tt) = non_number {
-                    tt
-                } else {
-                    let mut s: String = c.into();
-                    let mut period = false;
-                    while let Some(c) = next!() {
-                        let c = ok!(c);
-                        if c.is_digit(10) || c == '.' && !period {
-                            if c == '.' {
-                                period = true;
-                            }
-                            s.push(c);
-                        } else {
-                            put_back!(Ok(c));
-                            break;
-                        }
-                    }
-                    if s == "-" || s == "+" {
-                        TT::Ident(s)
-                    } else if period {
-                        TT::Float(ok!(s.parse()))
-                    } else if s.starts_with('-') || s.starts_with('+') {
-                        TT::Int(ok!(s.parse()))
-                    } else {
-                        TT::Nat(ok!(s.parse()))
-                    }
-                }
+                self.finish_number(c, non_number)?
             }
             // Brackets
             '[' => {
-                brackets.push('[');
+                self.brackets.push('[');
                 TT::OpenBracket
             }
             ']' => {
-                if let Some(brack) = brackets.pop() {
+                if let Some(brack) = self.brackets.pop() {
                     if brack != '[' {
-                        return Err(LexErrorKind::InvalidBracket(']').span(start, loc!()));
+                        return Err(LexErrorKind::InvalidBracket(']').span(self.start, self.loc));
                     }
                 } else {
-                    return Err(LexErrorKind::UnmatchedBracket(']').span(start, loc!()));
+                    return Err(LexErrorKind::UnmatchedBracket(']').span(self.start, self.loc));
                 };
                 TT::CloseBracket
             }
             '{' => {
-                brackets.push('{');
+                self.brackets.push('{');
                 TT::OpenCurly
             }
             '}' => {
-                if let Some(brack) = brackets.pop() {
+                if let Some(brack) = self.brackets.pop() {
                     if brack != '{' {
-                        return Err(LexErrorKind::InvalidBracket('}').span(start, loc!()));
+                        return Err(LexErrorKind::InvalidBracket('}').span(self.start, self.loc));
                     }
                 } else {
-                    return Err(LexErrorKind::UnmatchedBracket('}').span(start, loc!()));
+                    return Err(LexErrorKind::UnmatchedBracket('}').span(self.start, self.loc));
                 };
                 TT::CloseCurly
             }
             '(' => {
-                brackets.push('(');
+                self.brackets.push('(');
                 TT::OpenParen
             }
             ')' => {
-                if let Some(brack) = brackets.pop() {
+                if let Some(brack) = self.brackets.pop() {
                     if brack != '(' {
-                        return Err(LexErrorKind::InvalidBracket(')').span(start, loc!()));
+                        return Err(LexErrorKind::InvalidBracket(')').span(self.start, self.loc));
                     }
                 } else {
-                    return Err(LexErrorKind::UnmatchedBracket(')').span(start, loc!()));
+                    return Err(LexErrorKind::UnmatchedBracket(')').span(self.start, self.loc));
                 };
                 TT::CloseParen
             }
@@ -330,36 +294,98 @@ where
             '~' => TT::Tilde,
             '.' => TT::Period,
             '=' => TT::Equals,
-            c if c.is_whitespace() => continue,
+            c if c.is_whitespace() => return Ok(()),
             // Idents and others
             c if ident_char(c) => {
                 let mut s: String = c.into();
-                while let Some(c) = next!() {
-                    let c = ok!(c);
+                while let Some(c) = self.try_next_char() {
+                    let c = c?;
                     if ident_char(c) {
                         s.push(c);
                     } else {
-                        put_back!(Ok(c));
-                        break;
+                        self.push_tt(ident_str_as_tt(s));
+                        self.handle_char(Ok(c))?;
+                        return Ok(());
                     }
                 }
-                match s.as_str() {
-                    "true" => TT::Bool(true),
-                    "false" => TT::Bool(false),
-                    _ => TT::Ident(s),
+                ident_str_as_tt(s)
+            }
+            c => return Err(LexErrorKind::InvalidCharacter(c).span(self.start, self.loc)),
+        };
+        self.push_tt(tt);
+        Ok(())
+    }
+    fn push_tt(&mut self, tt: TT) {
+        println!("{} - {}", self.start, self.loc);
+        assert!(self.start <= self.loc);
+        self.tokens.push(Token {
+            tt,
+            span: Span::new(self.start, self.loc),
+        })
+    }
+    fn finish_number(&mut self, c: char, non_number: Option<TT>) -> Result<TT, LexError> {
+        Ok(if let Some(tt) = non_number {
+            tt
+        } else {
+            let mut s: String = c.into();
+            let mut period = false;
+            while let Some(c) = self.try_next_char() {
+                let c = c?;
+                if c.is_digit(10) || c == '.' && !period {
+                    if c == '.' {
+                        period = true;
+                    }
+                    s.push(c);
+                } else {
+                    self.handle_char(Ok(c))?;
+                    break;
                 }
             }
-            c => return Err(LexErrorKind::InvalidCharacter(c).span(start, loc!())),
-        };
-        tokens.push(Token {
-            tt,
-            span: Span::new(start, Loc::new(line.get(), col.get())),
-        });
+            if s == "-" || s == "+" {
+                TT::Ident(s)
+            } else if period {
+                TT::Float(self.span_res(s.parse())?)
+            } else if s.starts_with('-') || s.starts_with('+') {
+                TT::Int(self.span_res(s.parse())?)
+            } else {
+                TT::Nat(self.span_res(s.parse())?)
+            }
+        })
     }
-    if let Some(brack) = brackets.pop() {
-        return Err(LexErrorKind::UnmatchedBracket(brack).span(loc!(), loc!()));
+    fn span_res<T, E>(&self, res: Result<T, E>) -> Result<T, LexError>
+    where
+        E: Into<LexErrorKind>,
+    {
+        res.map_err(|e| e.into().span(self.start, self.loc))
     }
-    Ok(tokens)
+}
+
+fn ident_str_as_tt(s: String) -> TT {
+    match s.as_str() {
+        "true" => TT::Bool(true),
+        "false" => TT::Bool(false),
+        _ => TT::Ident(s),
+    }
+}
+
+pub fn lex<R>(input: R) -> Result<Vec<Token>, LexError>
+where
+    R: Read,
+{
+    let mut lexer = Lexer {
+        loc: Loc::new(1, 0),
+        start: Loc::new(1, 0),
+        brackets: Vec::new(),
+        chars: unicode_reader::CodePoints::from(input.bytes()),
+        tokens: Vec::new(),
+    };
+    while let Some(c) = lexer.try_next_char() {
+        lexer.handle_char(c)?;
+    }
+    if let Some(brack) = lexer.brackets.pop() {
+        return Err(LexErrorKind::UnmatchedBracket(brack).span(lexer.start, lexer.loc));
+    }
+    Ok(lexer.tokens)
 }
 
 fn escaped_char(c: char) -> Result<char, LexErrorKind> {
