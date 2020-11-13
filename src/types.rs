@@ -6,7 +6,7 @@ use std::{
 
 use sha3::*;
 
-use crate::{ast::Hash, span::*};
+use crate::{ast::*, span::*};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -15,18 +15,6 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn hash_finish(&self) -> Hash {
-        let mut sha = Sha3_256::default();
-        self.hash(&mut sha);
-        Hash(sha.finalize())
-    }
-    pub fn hash(&self, sha: &mut Sha3_256) {
-        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
-        match self {
-            Type::Prim(prim) => prim.hash(sha),
-            Type::Generic(g) => sha.update(&[g.index]),
-        }
-    }
     pub fn generics(&self) -> Vec<u8> {
         let mut generics = match self {
             Type::Generic(g) => vec![g.index],
@@ -44,6 +32,16 @@ impl Type {
         generics.sort_unstable();
         generics.dedup();
         generics
+    }
+}
+
+impl TreeHash for Type {
+    fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
+        match self {
+            Type::Prim(prim) => prim.hash(sha),
+            Type::Generic(g) => sha.update(&[g.index]),
+        }
     }
 }
 
@@ -116,8 +114,8 @@ impl<T> Primitive<T> {
     }
 }
 
-impl Primitive {
-    pub fn hash(&self, sha: &mut Sha3_256) {
+impl TreeHash for Primitive {
+    fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
             Primitive::List(inner) => inner.hash(sha),
@@ -479,5 +477,5 @@ pub enum TypeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnresolvedType {
     Prim(UnresolvedPrimitive),
-    Ident(String),
+    Ident(Ident),
 }

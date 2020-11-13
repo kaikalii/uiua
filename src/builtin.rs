@@ -7,7 +7,7 @@ use crate::types::*;
 macro_rules! builtin {
     ($($(#[$doc:meta])? $name:ident,)*) => {
         #[derive(Debug, Clone, Copy)]
-        pub enum BuiltinDef {
+        pub enum BuiltinWord {
             $(
                 $(#[$doc])*
                 $name,
@@ -17,19 +17,19 @@ macro_rules! builtin {
             /// An if statement
             If(u8, u8),
         }
-        impl BuiltinDef {
-            const ALL_SIMPLE: &'static [BuiltinDef] = &[$(BuiltinDef::$name),*];
+        impl BuiltinWord {
+            const ALL_SIMPLE: &'static [BuiltinWord] = &[$(BuiltinWord::$name),*];
         }
     };
 }
 
-static ALL_BUILTIN_DEFS: Lazy<Vec<BuiltinDef>> = Lazy::new(|| {
-    BuiltinDef::ALL_SIMPLE
+static ALL_BUILTIN_DEFS: Lazy<Vec<BuiltinWord>> = Lazy::new(|| {
+    BuiltinWord::ALL_SIMPLE
         .iter()
         .copied()
         .chain((0..10).flat_map(|bef| {
             (0..10).flat_map(move |aft| {
-                once(BuiltinDef::Call(bef, aft)).chain(once(BuiltinDef::If(bef, aft)))
+                once(BuiltinWord::Call(bef, aft)).chain(once(BuiltinWord::If(bef, aft)))
             })
         }))
         .collect()
@@ -66,19 +66,19 @@ fn u() -> Type {
     generic("U", 1)
 }
 
-impl BuiltinDef {
+impl BuiltinWord {
     pub fn all() -> &'static Lazy<Vec<Self>> {
         &ALL_BUILTIN_DEFS
     }
     pub fn sig(&self) -> Signature {
         let (before, after) = match self {
-            BuiltinDef::Dup => (vec![t()], vec![t(); 2]),
-            BuiltinDef::List => (vec![], vec![generic_list()]),
-            BuiltinDef::App => (vec![generic_list(), t()], vec![generic_list()]),
-            BuiltinDef::Swap => (vec![t(), u()], vec![u(), t()]),
-            BuiltinDef::Add => (vec![t(); 2], vec![t()]),
-            BuiltinDef::Pop => (vec![t()], vec![]),
-            BuiltinDef::Call(before, after) => {
+            BuiltinWord::Dup => (vec![t()], vec![t(); 2]),
+            BuiltinWord::List => (vec![], vec![generic_list()]),
+            BuiltinWord::App => (vec![generic_list(), t()], vec![generic_list()]),
+            BuiltinWord::Swap => (vec![t(), u()], vec![u(), t()]),
+            BuiltinWord::Add => (vec![t(); 2], vec![t()]),
+            BuiltinWord::Pop => (vec![t()], vec![]),
+            BuiltinWord::Call(before, after) => {
                 let mut params = DefaultParams::default();
                 let before: Vec<_> = params.by_ref().take(*before as usize).collect();
                 let after: Vec<_> = params.by_ref().take(*after as usize).collect();
@@ -91,7 +91,7 @@ impl BuiltinDef {
                     after,
                 )
             }
-            BuiltinDef::If(before, after) => {
+            BuiltinWord::If(before, after) => {
                 let mut params = DefaultParams::default();
                 let before: Vec<_> = params.by_ref().take(*before as usize).collect();
                 let after: Vec<_> = params.by_ref().take(*after as usize).collect();
@@ -111,14 +111,14 @@ impl BuiltinDef {
     }
     pub fn name(&self) -> Cow<'static, str> {
         match self {
-            BuiltinDef::Dup => "dup",
-            BuiltinDef::List => "list",
-            BuiltinDef::App => "app",
-            BuiltinDef::Swap => "swap",
-            BuiltinDef::Add => "+",
-            BuiltinDef::Pop => "pop",
-            BuiltinDef::Call(before, after) => return format!("!{}--{}", before, after).into(),
-            BuiltinDef::If(before, after) => return format!("?{}--{}", before, after).into(),
+            BuiltinWord::Dup => "dup",
+            BuiltinWord::List => "list",
+            BuiltinWord::App => "|<",
+            BuiltinWord::Swap => "swap",
+            BuiltinWord::Add => "+",
+            BuiltinWord::Pop => "pop",
+            BuiltinWord::Call(before, after) => return format!("!{}--{}", before, after).into(),
+            BuiltinWord::If(before, after) => return format!("?{}--{}", before, after).into(),
         }
         .into()
     }

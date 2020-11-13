@@ -25,6 +25,7 @@ pub enum TT {
     Colon,
     SemiColon,
     Tilde,
+    Period,
 }
 
 impl TT {
@@ -44,7 +45,6 @@ impl TT {
     }
     pub fn node(self) -> Option<UnresolvedNode> {
         Some(match self {
-            TT::Ident(s) => UnresolvedNode::Ident(s),
             TT::Text(s) => UnresolvedNode::Literal(Literal::Text(s)),
             TT::Bool(b) => UnresolvedNode::Literal(Literal::Bool(b)),
             TT::Nat(n) => UnresolvedNode::Literal(Literal::Nat(n)),
@@ -76,6 +76,7 @@ impl fmt::Display for TT {
             TT::Colon => ":".fmt(f),
             TT::SemiColon => ";".fmt(f),
             TT::Tilde => "~".fmt(f),
+            TT::Period => ".".fmt(f),
         }
     }
 }
@@ -314,6 +315,7 @@ where
             ':' => TT::Colon,
             ';' => TT::SemiColon,
             '~' => TT::SemiColon,
+            '.' => TT::Period,
             c if c.is_whitespace() => continue,
             // Idents and others
             c if ident_char(c) => {
@@ -357,5 +359,5 @@ fn escaped_char(c: char) -> Result<char, LexErrorKind> {
 }
 
 fn ident_char(c: char) -> bool {
-    c > ' ' && c as u32 != 127 && !"[]{}()".contains(c)
+    c > ' ' && c as u32 != 127 && !".[]{}()".contains(c)
 }

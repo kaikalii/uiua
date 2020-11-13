@@ -37,7 +37,7 @@ impl From<LexError> for ParseError {
 struct Parser {
     tokens: std::vec::IntoIter<Token>,
     put_back: Option<Token>,
-    defs: Vec<Sp<UnresolvedDef>>,
+    defs: Vec<Sp<UnresolvedWord>>,
     loc: Loc,
 }
 
@@ -74,15 +74,28 @@ impl Parser {
     ) -> Option<Sp<T::Output>> {
         self.mat(expected, transform).ok()
     }
+    /// Match an identifier
+    fn ident(&mut self) -> Result<Option<Sp<Ident>>, ParseError> {
+        Ok(if let Some(first) = self.try_mat("identifier", TT::ident) {
+            Some(if self.try_mat(".", TT::Period).is_some() {
+                let second = self.mat("identifier", TT::ident)?;
+                (first.span - second.span).sp(Ident::new(Some(first.data), second.data))
+            } else {
+                first.map(|s| Ident::new(None, s))
+            })
+        } else {
+            None
+        })
+    }
     /// Match a type
     fn ty(&mut self) -> Result<Option<Sp<UnresolvedType>>, ParseError> {
-        Ok(if let Some(ident) = self.try_mat("type", TT::ident) {
-            Some(ident.span.sp(match ident.as_str() {
-                "Bool" => UnresolvedType::Prim(Primitive::Bool),
-                "Nat" => UnresolvedType::Prim(Primitive::Nat),
-                "Int" => UnresolvedType::Prim(Primitive::Int),
-                "Float" => UnresolvedType::Prim(Primitive::Float),
-                "Text" => UnresolvedType::Prim(Primitive::Text),
+        Ok(if let Some(ident) = self.ident()? {
+            Some(ident.span.sp(match (&ident.module, ident.name.as_str()) {
+                (None, "Bool") => UnresolvedType::Prim(Primitive::Bool),
+                (None, "Nat") => UnresolvedType::Prim(Primitive::Nat),
+                (None, "Int") => UnresolvedType::Prim(Primitive::Int),
+                (None, "Float") => UnresolvedType::Prim(Primitive::Float),
+                (None, "Text") => UnresolvedType::Prim(Primitive::Text),
                 _ => UnresolvedType::Ident(ident.data),
             }))
         } else if let Some(open_bracket) = self.try_mat("[", TT::OpenBracket) {
@@ -147,6 +160,8 @@ impl Parser {
         loop {
             if let Some(node) = self.try_mat("term", TT::node) {
                 nodes.push(node);
+            } else if let Some(ident) = self.ident()? {
+                nodes.push(ident.map(UnresolvedNode::Ident));
             } else if self.try_mat("[", TT::OpenBracket).is_some() {
                 let sub_nodes = self.seq()?;
                 let span = sub_nodes
@@ -154,7 +169,7 @@ impl Parser {
                     .zip(sub_nodes.last())
                     .map(|(a, b)| a.span - b.span)
                     .unwrap_or_else(|| Span::new(self.loc, self.loc));
-                nodes.push(span.sp(UnresolvedNode::Defered(sub_nodes)));
+                nodes.push(span.sp(UnresolvedNode::Quotation(sub_nodes)));
                 self.mat("]", TT::CloseBracket)?;
             } else {
                 break;
@@ -176,8 +191,11 @@ impl Parser {
         // Match the closing semicolon
         self.try_mat(";", TT::SemiColon);
         let end = self.loc;
-        self.defs
-            .push(Span::new(start, end).sp(UnresolvedDef { name, sig, nodes }));
+        self.defs.push(Span::new(start, end).sp(UnresolvedWord {
+            name: name.map(|name| Ident::new(None, name)),
+            sig,
+            nodes,
+        }));
         Ok(())
     }
     fn expected<T>(&mut self, expected: &'static str) -> Result<T, ParseError> {
@@ -193,7 +211,7 @@ impl Parser {
     }
 }
 
-pub fn parse<R>(input: R) -> Result<Vec<Sp<UnresolvedDef>>, ParseError>
+pub fn parse<R>(input: R) -> Result<Vec<Sp<UnresolvedWord>>, ParseError>
 where
     R: Read,
 {

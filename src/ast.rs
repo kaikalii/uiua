@@ -2,7 +2,7 @@ use std::{fmt, mem};
 
 use sha3::*;
 
-use crate::{builtin::BuiltinDef, span::*, types::*};
+use crate::{builtin::BuiltinWord, span::*, types::*};
 
 type HashInner =
     digest::generic_array::GenericArray<u8, digest::generic_array::typenum::consts::U32>;
@@ -22,60 +22,67 @@ impl AsRef<[u8]> for Hash {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Def {
-    pub sig: Signature,
-    pub kind: DefKind,
-}
-
-impl Def {
-    pub fn hash_finish(&self) -> Hash {
+pub trait TreeHash {
+    fn hash(&self, sha: &mut Sha3_256);
+    fn hash_finish(&self) -> Hash {
         let mut sha = Sha3_256::default();
-        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(&self.kind)) });
-        match &self.kind {
-            DefKind::Uiua(nodes) => {
-                for node in nodes {
-                    node.hash(&mut sha);
-                }
-            }
-            DefKind::Builtin(bi) => {
-                sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(bi)) });
-                sha.update(unsafe { mem::transmute::<_, [u8; 3]>(*bi) });
-            }
-        }
+        self.hash(&mut sha);
         Hash(sha.finalize())
     }
 }
 
-impl From<BuiltinDef> for Def {
-    fn from(builtin: BuiltinDef) -> Self {
-        Def {
+#[derive(Debug, Clone)]
+pub struct Word {
+    pub sig: Signature,
+    pub kind: WordKind,
+}
+
+impl TreeHash for Word {
+    fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(&self.kind)) });
+        match &self.kind {
+            WordKind::Uiua(nodes) => {
+                for node in nodes {
+                    node.hash(sha);
+                }
+            }
+            WordKind::Builtin(bi) => {
+                sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(bi)) });
+                sha.update(unsafe { mem::transmute::<_, [u8; 3]>(*bi) });
+            }
+        }
+    }
+}
+
+impl From<BuiltinWord> for Word {
+    fn from(builtin: BuiltinWord) -> Self {
+        Word {
             sig: builtin.sig(),
-            kind: DefKind::Builtin(builtin),
+            kind: WordKind::Builtin(builtin),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum DefKind {
+pub enum WordKind {
     Uiua(Vec<Node>),
-    Builtin(BuiltinDef),
+    Builtin(BuiltinWord),
 }
 
 #[derive(Debug, Clone)]
 pub enum Node {
     Ident(Hash),
     SelfIdent,
-    Defered(Vec<Sp<Node>>),
+    Quotation(Vec<Sp<Node>>),
     Literal(Literal),
 }
 
-impl Node {
-    pub fn hash(&self, sha: &mut Sha3_256) {
+impl TreeHash for Node {
+    fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
             Node::Ident(hash) => sha.update(hash),
-            Node::Defered(nodes) => {
+            Node::Quotation(nodes) => {
                 for node in nodes {
                     node.hash(sha);
                 }
@@ -87,16 +94,44 @@ impl Node {
 }
 
 #[derive(Debug, Clone)]
-pub struct UnresolvedDef {
-    pub name: Sp<String>,
+pub struct UnresolvedWord {
+    pub name: Sp<Ident>,
     pub sig: Option<UnresolvedSignature>,
     pub nodes: Vec<Sp<UnresolvedNode>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Ident {
+    pub module: Option<String>,
+    pub name: String,
+}
+
+impl Ident {
+    pub fn new(module: Option<String>, name: String) -> Self {
+        Ident { module, name }
+    }
+    pub fn base(name: String) -> Self {
+        Ident::new(Some("base".into()), name)
+    }
+    pub fn single_and_eq(&self, s: &str) -> bool {
+        self.module.is_none() && self.name == s
+    }
+}
+
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(module) = &self.module {
+            write!(f, "{}.{}", module, self.name)
+        } else {
+            self.name.fmt(f)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum UnresolvedNode {
-    Ident(String),
-    Defered(Vec<Sp<UnresolvedNode>>),
+    Ident(Ident),
+    Quotation(Vec<Sp<UnresolvedNode>>),
     Literal(Literal),
 }
 
@@ -110,8 +145,8 @@ pub enum Literal {
     Text(String),
 }
 
-impl Literal {
-    pub fn hash(&self, sha: &mut Sha3_256) {
+impl TreeHash for Literal {
+    fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
             Literal::Bool(b) => sha.update(&[*b as u8]),
@@ -122,6 +157,9 @@ impl Literal {
             Literal::Text(s) => sha.update(s),
         }
     }
+}
+
+impl Literal {
     pub fn as_primitive<T>(&self) -> Primitive<T> {
         match self {
             Literal::Bool(_) => Primitive::Bool,
