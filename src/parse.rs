@@ -83,7 +83,7 @@ impl Parser {
                 "Int" => UnresolvedType::Prim(Primitive::Int),
                 "Float" => UnresolvedType::Prim(Primitive::Float),
                 "Text" => UnresolvedType::Prim(Primitive::Text),
-                _ => UnresolvedType::Other(ident.data),
+                _ => UnresolvedType::Ident(ident.data),
             }))
         } else if let Some(open_bracket) = self.try_mat("[", TT::OpenBracket) {
             let start = open_bracket.span.start;

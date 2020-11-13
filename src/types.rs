@@ -328,5 +328,6 @@ pub enum TypeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnresolvedType {
     Prim(Primitive<Sp<UnresolvedType>>),
-    Other(String),
+    Ident(String),
+    Generic(Generic),
 }

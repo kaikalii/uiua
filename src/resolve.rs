@@ -64,13 +64,14 @@ pub fn resolve_sig(
 pub fn resolve_type(ty: &Sp<UnresolvedType>, defs: &Defs) -> SpResult<Type, ResolutionError> {
     match &ty.data {
         UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span)?)),
-        UnresolvedType::Other(name) => {
+        UnresolvedType::Ident(name) => {
             if let Some((_, ty)) = defs.type_by_name(name) {
                 Ok(ty.clone())
             } else {
                 Err(ty.span.sp(ResolutionError::Unknown(name.clone())))
             }
         }
+        UnresolvedType::Generic(g) => Ok(Type::Generic(g.clone())),
     }
 }
 
