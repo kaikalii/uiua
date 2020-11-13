@@ -42,7 +42,7 @@ impl CodeBase {
                 if let DebouncedEvent::Write(path) = event {
                     // Handle file change
                     if let Some(diff) = pathdiff::diff_paths(&path, env::current_dir().unwrap()) {
-                        if !diff.starts_with(".git") {
+                        if is_scratch_file(&path) {
                             match cb.handle_file_change(&path) {
                                 Ok(errors) => {
                                     println!();
@@ -117,6 +117,18 @@ impl CodeBase {
             }
         }
         Ok(())
+    }
+}
+
+fn is_scratch_file(path: &Path) -> bool {
+    if let Some(stem) = path.file_stem() {
+        if let Some(ext) = path.extension() {
+            ext == "uiua"
+        } else {
+            stem == "scratch"
+        }
+    } else {
+        false
     }
 }
 
