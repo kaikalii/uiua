@@ -93,14 +93,33 @@ impl Parser {
             } else {
                 return self.expected("type");
             }
-        } else if let Some(sig) = self.sig()? {
+        } else if let Some(sig) = self.sig(None)? {
             Some(sig.map(|sig| UnresolvedType::Prim(Primitive::Op(sig))))
         } else {
             return Ok(None);
         })
     }
+    /// Match type parameter declaration
+    fn type_params(&mut self) -> Result<Option<UnresolvedTypeParams>, ParseError> {
+        Ok(if let Some(open_curly) = self.try_mat("{", TT::OpenCurly) {
+            let start = open_curly.span.start;
+            // Match before args types
+            let mut names = Vec::new();
+            while let Some(name) = self.try_mat("type parameter", TT::ident) {
+                names.push(name);
+            }
+            // Match closing paren
+            let end = self.mat("}", TT::CloseCurly)?.span.end;
+            Some(Span::new(start, end).sp(names))
+        } else {
+            None
+        })
+    }
     /// Match a type signature
-    fn sig(&mut self) -> Result<Option<Sp<Signature<Sp<UnresolvedType>>>>, ParseError> {
+    fn sig(
+        &mut self,
+        type_params: Option<UnresolvedTypeParams>,
+    ) -> Result<Option<UnresolvedSignature>, ParseError> {
         Ok(if let Some(open_paren) = self.try_mat("(", TT::OpenParen) {
             let start = open_paren.span.start;
             // Match before args types
@@ -117,7 +136,7 @@ impl Parser {
             }
             // Match closing paren
             let end = self.mat(")", TT::CloseParen)?.span.end;
-            Some(Span::new(start, end).sp(Signature::new(before, after)))
+            Some(Span::new(start, end).sp(Signature::with_bounds(type_params, before, after)))
         } else {
             None
         })
@@ -148,8 +167,10 @@ impl Parser {
         // Match the colon and name
         let start = self.mat(":", TT::Colon)?.span.start;
         let name = self.mat("identifier", TT::ident)?;
+        // Match optional type parameters
+        let type_params = self.type_params()?;
         // Match an optional type signature
-        let sig = self.sig()?;
+        let sig = self.sig(type_params)?;
         // Match the nodes
         let nodes = self.seq()?;
         // Match the closing semicolon

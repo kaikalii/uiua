@@ -1,4 +1,4 @@
-use std::{fmt, mem};
+use std::{collections::HashMap, fmt, mem};
 
 use sha3::*;
 
@@ -74,7 +74,7 @@ impl Generic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Primitive<T = Type> {
+pub enum Primitive<T = Type, B = TypeParams> {
     Bool,
     Nat,
     Int,
@@ -82,8 +82,10 @@ pub enum Primitive<T = Type> {
     Char,
     Text,
     List(Box<T>),
-    Op(Signature<T>),
+    Op(Signature<T, B>),
 }
+
+pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>, Option<UnresolvedTypeParams>>;
 
 impl<T> Primitive<T> {
     pub fn list(inner: T) -> Self {
@@ -130,14 +132,50 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Signature<T = Type> {
+pub struct TypeBound {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature<T = Type, B = TypeParams> {
+    pub bounds: B,
     pub before: Vec<T>,
     pub after: Vec<T>,
 }
 
-impl<T> Signature<T> {
-    pub fn new(before: Vec<T>, after: Vec<T>) -> Self {
-        Signature { before, after }
+pub type TypeParams = Vec<TypeBound>;
+pub type UnresolvedTypeParams = Sp<Vec<Sp<String>>>;
+pub type UnresolvedSignature = Sp<Signature<Sp<UnresolvedType>, Option<UnresolvedTypeParams>>>;
+
+impl<T, B> Signature<T, B> {
+    pub fn with_bounds(bounds: B, before: Vec<T>, after: Vec<T>) -> Self {
+        Signature {
+            bounds,
+            before,
+            after,
+        }
+    }
+}
+
+impl Signature {
+    pub fn new(before: Vec<Type>, after: Vec<Type>) -> Self {
+        let mut sig = Signature::with_bounds(Vec::new(), before, after);
+        let reassign: HashMap<u8, u8> = sig
+            .generics()
+            .into_iter()
+            .enumerate()
+            .map(|(i, g)| (g, i as u8))
+            .collect();
+        let mut bounds = Vec::new();
+        for ty in sig.before.iter_mut().chain(&mut sig.after) {
+            transform_type(ty, &mut |ty| {
+                if let Type::Generic(g) = ty {
+                    g.index = reassign[&g.index];
+                    if bounds.len() < g.index as usize {
+                        bounds.resize(g.index as usize + 1, TypeBound {});
+                    }
+                }
+            });
+        }
+        sig
     }
 }
 
@@ -163,14 +201,14 @@ impl Signature {
             + 1;
         // println!("b + {}", add_to_b);
         for ty in &mut b.before {
-            transform_type(ty, &|ty| {
+            transform_type(ty, &mut |ty| {
                 if let Type::Generic(g) = ty {
                     g.index += add_to_b;
                 }
             });
         }
         for ty in &mut b.after {
-            transform_type(ty, &|ty| {
+            transform_type(ty, &mut |ty| {
                 if let Type::Generic(g) = ty {
                     g.index += add_to_b;
                 }
@@ -267,7 +305,7 @@ fn trade_generics(a: &mut Type, b: &mut Type, conv: &mut Vec<(u8, Type)>) {
 }
 
 fn set_generic(ty: &mut Type, i: u8, new: &Type) {
-    transform_type(ty, &|ty| {
+    transform_type(ty, &mut |ty| {
         if let Type::Generic(g) = ty {
             if i == g.index {
                 *ty = new.clone()
@@ -276,9 +314,9 @@ fn set_generic(ty: &mut Type, i: u8, new: &Type) {
     })
 }
 
-fn transform_type<F>(ty: &mut Type, f: &F)
+fn transform_type<F>(ty: &mut Type, f: &mut F)
 where
-    F: Fn(&mut Type),
+    F: FnMut(&mut Type),
 {
     f(ty);
     match ty {
@@ -337,7 +375,6 @@ pub enum TypeError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnresolvedType {
-    Prim(Primitive<Sp<UnresolvedType>>),
+    Prim(UnresolvedPrimitive),
     Ident(String),
-    Generic(Generic),
 }

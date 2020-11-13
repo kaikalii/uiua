@@ -88,7 +88,7 @@ impl Node {
 #[derive(Debug, Clone)]
 pub struct UnresolvedDef {
     pub name: Sp<String>,
-    pub sig: Option<Sp<Signature<Sp<UnresolvedType>>>>,
+    pub sig: Option<UnresolvedSignature>,
     pub nodes: Vec<Sp<UnresolvedNode>>,
 }
 

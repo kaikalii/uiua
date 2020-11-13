@@ -2,7 +2,7 @@ use crate::{ast::*, codebase::*, span::*, types::*};
 
 pub fn resolve_def(def: &Sp<UnresolvedDef>, defs: &Defs) -> SpResult<Def, ResolutionError> {
     let given_sig = if let Some(sig) = &def.sig {
-        Some(resolve_sig(sig.as_ref(), defs)?)
+        Some(resolve_sig(sig, defs)?)
     } else {
         None
     };
@@ -45,7 +45,7 @@ pub fn resolve_sequence(
 }
 
 pub fn resolve_sig(
-    sig: Sp<&Signature<Sp<UnresolvedType>>>,
+    sig: &UnresolvedSignature,
     defs: &Defs,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     let mut resolved_before = Vec::new();
@@ -55,7 +55,15 @@ pub fn resolve_sig(
         (&sig.after, &mut resolved_after),
     ] {
         for unresolved in *unresolved {
-            resolved.push(resolve_type(unresolved, defs)?);
+            if let (Some(type_params), UnresolvedType::Ident(name)) = (&sig.bounds, &**unresolved) {
+                if let Some(i) = type_params.iter().position(|n| &**n == name) {
+                    resolved.push(Type::Generic(Generic::new(name, i as u8)));
+                } else {
+                    resolved.push(resolve_type(unresolved, defs)?);
+                }
+            } else {
+                resolved.push(resolve_type(unresolved, defs)?);
+            }
         }
     }
     Ok(sig.span.sp(Signature::new(resolved_before, resolved_after)))
@@ -71,12 +79,11 @@ pub fn resolve_type(ty: &Sp<UnresolvedType>, defs: &Defs) -> SpResult<Type, Reso
                 Err(ty.span.sp(ResolutionError::Unknown(name.clone())))
             }
         }
-        UnresolvedType::Generic(g) => Ok(Type::Generic(g.clone())),
     }
 }
 
 pub fn resolve_prim(
-    prim: &Primitive<Sp<UnresolvedType>>,
+    prim: &UnresolvedPrimitive,
     defs: &Defs,
     span: Span,
 ) -> SpResult<Primitive, ResolutionError> {
@@ -88,7 +95,7 @@ pub fn resolve_prim(
         Primitive::Char => Primitive::Char,
         Primitive::Text => Primitive::Text,
         Primitive::List(ty) => Primitive::List(Box::new(resolve_type(ty, defs)?)),
-        Primitive::Op(sig) => Primitive::Op(resolve_sig(span.sp(sig), defs)?.data),
+        Primitive::Op(sig) => Primitive::Op(resolve_sig(&span.sp(sig.clone()), defs)?.data),
     })
 }
 
