@@ -1,4 +1,4 @@
-- Runtime
 - Modules
+- Traits
 - Lots more builtins
-- Codebase only watches certain paths
+- Runtime

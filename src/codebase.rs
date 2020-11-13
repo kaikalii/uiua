@@ -62,7 +62,7 @@ impl CodeBase {
     }
     fn handle_file_change(&self, path: &Path) -> Result<Vec<Sp<ResolutionError>>, Box<dyn Error>> {
         let mut defs = self.defs.lock().unwrap();
-        // *defs = Defs::default();
+        *defs = Defs::default();
         let mut unresolved_defs: Vec<_> = parse::parse(fs::File::open(path)?)?
             .into_iter()
             .map(|ud| (ud, None))
