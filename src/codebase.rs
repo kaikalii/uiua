@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env,
     error::Error,
     fs,
@@ -12,12 +13,13 @@ use std::{
 use colored::*;
 use notify::{self, watcher, DebouncedEvent, RecursiveMode, Watcher};
 
-use crate::parse;
+use crate::{ast::*, builtin::*, parse, resolve::*, span::*, types::*};
 
 #[derive(Clone)]
 pub struct CodeBase {
     top_dir: Arc<PathBuf>,
     path: Arc<Mutex<Vec<String>>>,
+    pub defs: Arc<Mutex<Defs>>,
 }
 
 impl CodeBase {
@@ -28,7 +30,8 @@ impl CodeBase {
         watcher.watch(env::current_dir()?, RecursiveMode::Recursive)?;
         let cb = CodeBase {
             top_dir: Arc::new(dir.as_ref().to_path_buf()),
-            path: Arc::new(Mutex::new(Vec::new())),
+            path: Default::default(),
+            defs: Default::default(),
         };
         let cb_clone = cb.clone();
         // Spawn watcher thread
@@ -38,13 +41,18 @@ impl CodeBase {
             for event in event_recv {
                 if let DebouncedEvent::Write(path) = event {
                     // Handle file change
-                    if let Err(e) = cb.handle_file_change(&path) {
-                        if let Some(diff) = pathdiff::diff_paths(path, env::current_dir().unwrap())
-                        {
-                            if !diff.starts_with(".git") {
-                                println!("\n{} {}", e, diff.to_string_lossy());
-                                cb.print_path_prompt();
+                    if let Some(diff) = pathdiff::diff_paths(&path, env::current_dir().unwrap()) {
+                        if is_scratch_file(&path) {
+                            match cb.handle_file_change(&path) {
+                                Ok(errors) => {
+                                    println!();
+                                    for e in errors {
+                                        println!("{} {}", e, diff.to_string_lossy());
+                                    }
+                                }
+                                Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
                             }
+                            cb.print_path_prompt();
                         }
                     }
                 }
@@ -52,12 +60,32 @@ impl CodeBase {
         });
         Ok(cb)
     }
-    fn handle_file_change(&self, path: &Path) -> Result<(), Box<dyn Error>> {
-        for item in parse::parse(fs::File::open(path)?)? {
-            println!("{:#?}", item);
-            self.print_path_prompt();
+    fn handle_file_change(&self, path: &Path) -> Result<Vec<Sp<ResolutionError>>, Box<dyn Error>> {
+        let mut defs = self.defs.lock().unwrap();
+        *defs = Defs::default();
+        let mut unresolved_defs: Vec<_> = parse::parse(fs::File::open(path)?)?
+            .into_iter()
+            .map(|ud| (ud, None))
+            .collect();
+        let mut last_len = 0;
+        loop {
+            unresolved_defs = unresolved_defs
+                .into_iter()
+                .filter_map(|(unresolved, _)| match resolve_def(&unresolved, &defs) {
+                    Ok(def) => {
+                        println!("{} {}", unresolved.data.name.data, def.sig);
+                        defs.insert_def(unresolved.data.name.data, def);
+                        None
+                    }
+                    Err(e) => Some((unresolved, Some(e))),
+                })
+                .collect();
+            if unresolved_defs.len() == last_len {
+                break;
+            }
+            last_len = unresolved_defs.len();
         }
-        Ok(())
+        Ok(unresolved_defs.into_iter().filter_map(|(_, e)| e).collect())
     }
     pub fn dir(&self) -> PathBuf {
         self.path
@@ -88,9 +116,19 @@ impl CodeBase {
                 name => path.push(name.into()),
             }
         }
-        drop(path);
-        fs::create_dir_all(self.dir())?;
         Ok(())
+    }
+}
+
+fn is_scratch_file(path: &Path) -> bool {
+    if let Some(stem) = path.file_stem() {
+        if let Some(ext) = path.extension() {
+            ext == "uiua"
+        } else {
+            stem == "scratch"
+        }
+    } else {
+        false
     }
 }
 
@@ -100,4 +138,51 @@ pub enum CodeBaseError {
     IO(#[from] io::Error),
     #[error("{0}")]
     Notify(#[from] notify::Error),
+}
+
+#[derive(Debug)]
+pub struct Defs {
+    def_names: HashMap<String, Hash>,
+    defs: HashMap<Hash, Def>,
+    type_names: HashMap<String, Hash>,
+    types: HashMap<Hash, Type>,
+}
+
+impl Default for Defs {
+    fn default() -> Self {
+        let mut defs = Defs {
+            def_names: Default::default(),
+            defs: Default::default(),
+            type_names: Default::default(),
+            types: Default::default(),
+        };
+        for &bi in BuiltinDef::all().iter() {
+            defs.insert_def(bi.name().into(), bi.into());
+        }
+        defs
+    }
+}
+
+impl Defs {
+    pub fn def_by_name(&self, name: &str) -> Option<(&Hash, &Def)> {
+        self.def_names
+            .get(name)
+            .and_then(|hash| self.def_by_hash(hash).map(|def| (hash, def)))
+    }
+    pub fn def_by_hash(&self, hash: &Hash) -> Option<&Def> {
+        self.defs.get(hash)
+    }
+    pub fn insert_def(&mut self, name: String, def: Def) {
+        let hash = def.hash_finish();
+        self.def_names.insert(name, hash);
+        self.defs.insert(hash, def);
+    }
+    pub fn type_by_name(&self, name: &str) -> Option<(&Hash, &Type)> {
+        self.def_names
+            .get(name)
+            .and_then(|hash| self.type_by_hash(hash).map(|def| (hash, def)))
+    }
+    pub fn type_by_hash(&self, hash: &Hash) -> Option<&Type> {
+        self.types.get(hash)
+    }
 }

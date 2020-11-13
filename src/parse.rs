@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use crate::{ast::*, lex::*, types::*};
+use crate::{ast::*, lex::*, span::*, types::*};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseErrorKind {
@@ -13,29 +13,23 @@ pub enum ParseErrorKind {
 }
 
 impl ParseErrorKind {
-    pub fn span(self, start: Loc, end: Loc) -> ParseError {
-        ParseError {
-            kind: self,
-            start,
-            end,
-        }
+    pub fn span(self, span: Span) -> ParseError {
+        ParseError { kind: self, span }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("{kind} {end}")]
+#[error("{kind} {}", span.end)]
 pub struct ParseError {
     pub kind: ParseErrorKind,
-    pub start: Loc,
-    pub end: Loc,
+    pub span: Span,
 }
 
 impl From<LexError> for ParseError {
     fn from(e: LexError) -> Self {
         ParseError {
             kind: ParseErrorKind::Lex(e.kind),
-            start: e.start,
-            end: e.end,
+            span: e.span,
         }
     }
 }
@@ -43,7 +37,7 @@ impl From<LexError> for ParseError {
 struct Parser {
     tokens: std::vec::IntoIter<Token>,
     put_back: Option<Token>,
-    defs: Vec<UnresolvedDef>,
+    defs: Vec<Sp<UnresolvedDef>>,
     loc: Loc,
 }
 
@@ -55,62 +49,79 @@ impl Parser {
         &mut self,
         expected: &'static str,
         transform: T,
-    ) -> Result<Spanned<T::Output>, ParseError> {
+    ) -> Result<Sp<T::Output>, ParseError> {
         let token = if let Some(token) = self.next_token() {
             token
         } else {
-            return Err(ParseErrorKind::Expected(expected).span(self.loc, self.loc));
+            return Err(ParseErrorKind::Expected(expected).span(Span::new(self.loc, self.loc)));
         };
         if let Some(res) = transform.transform(token.tt.clone()) {
-            self.loc = token.end;
-            Ok(Spanned {
-                data: res,
-                start: token.start,
-                end: token.end,
-            })
+            self.loc = token.span.end;
+            Ok(token.span.sp(res))
         } else {
             self.put_back = Some(token.clone());
             Err(ParseErrorKind::ExpectedFound {
                 expected,
                 found: token.tt,
             }
-            .span(token.start, token.end))
+            .span(token.span))
         }
     }
     fn try_mat<T: TTTransform>(
         &mut self,
         expected: &'static str,
         transform: T,
-    ) -> Option<Spanned<T::Output>> {
+    ) -> Option<Sp<T::Output>> {
         self.mat(expected, transform).ok()
     }
     /// Match a type
-    fn ty(&mut self) -> Result<Option<UnresolvedType>, ParseError> {
+    fn ty(&mut self) -> Result<Option<Sp<UnresolvedType>>, ParseError> {
         Ok(if let Some(ident) = self.try_mat("type", TT::ident) {
-            Some(match ident.data.as_str() {
+            Some(ident.span.sp(match ident.as_str() {
                 "Bool" => UnresolvedType::Prim(Primitive::Bool),
                 "Nat" => UnresolvedType::Prim(Primitive::Nat),
                 "Int" => UnresolvedType::Prim(Primitive::Int),
                 "Float" => UnresolvedType::Prim(Primitive::Float),
-                "Text" => UnresolvedType::Prim(Primitive::String),
-                _ => UnresolvedType::Other(ident.data),
-            })
-        } else if self.try_mat("[", TT::OpenBracket).is_some() {
+                "Text" => UnresolvedType::Prim(Primitive::Text),
+                _ => UnresolvedType::Ident(ident.data),
+            }))
+        } else if let Some(open_bracket) = self.try_mat("[", TT::OpenBracket) {
+            let start = open_bracket.span.start;
             if let Some(ty) = self.ty()? {
-                self.mat("]", TT::CloseBracket)?;
-                Some(UnresolvedType::Prim(Primitive::List(Box::new(ty))))
+                let end = self.mat("]", TT::CloseBracket)?.span.end;
+                Some(Span::new(start, end).sp(UnresolvedType::Prim(Primitive::List(Box::new(ty)))))
             } else {
                 return self.expected("type");
             }
-        } else if let Some(sig) = self.sig()? {
-            Some(UnresolvedType::Prim(Primitive::Op(sig)))
+        } else if let Some(sig) = self.sig(None)? {
+            Some(sig.map(|sig| UnresolvedType::Prim(Primitive::Op(sig))))
         } else {
             return Ok(None);
         })
     }
+    /// Match type parameter declaration
+    fn type_params(&mut self) -> Result<Option<UnresolvedTypeParams>, ParseError> {
+        Ok(if let Some(open_curly) = self.try_mat("{", TT::OpenCurly) {
+            let start = open_curly.span.start;
+            // Match before args types
+            let mut names = Vec::new();
+            while let Some(name) = self.try_mat("type parameter", TT::ident) {
+                names.push(name);
+            }
+            // Match closing paren
+            let end = self.mat("}", TT::CloseCurly)?.span.end;
+            Some(Span::new(start, end).sp(names))
+        } else {
+            None
+        })
+    }
     /// Match a type signature
-    fn sig(&mut self) -> Result<Option<Signature<UnresolvedType>>, ParseError> {
-        Ok(if self.try_mat("(", TT::OpenParen).is_some() {
+    fn sig(
+        &mut self,
+        type_params: Option<UnresolvedTypeParams>,
+    ) -> Result<Option<UnresolvedSignature>, ParseError> {
+        Ok(if let Some(open_paren) = self.try_mat("(", TT::OpenParen) {
+            let start = open_paren.span.start;
             // Match before args types
             let mut before = Vec::new();
             while let Some(ty) = self.ty()? {
@@ -124,21 +135,26 @@ impl Parser {
                 after.push(ty);
             }
             // Match closing paren
-            self.mat(")", TT::CloseParen)?;
-            Some(Signature { before, after })
+            let end = self.mat(")", TT::CloseParen)?.span.end;
+            Some(Span::new(start, end).sp(Signature::with_bounds(type_params, before, after)))
         } else {
             None
         })
     }
     /// Match a sequence of terms
-    fn seq(&mut self) -> Result<Vec<UnresolvedNode>, ParseError> {
+    fn seq(&mut self) -> Result<Vec<Sp<UnresolvedNode>>, ParseError> {
         let mut nodes = Vec::new();
         loop {
             if let Some(node) = self.try_mat("term", TT::node) {
-                nodes.push(node.data);
+                nodes.push(node);
             } else if self.try_mat("[", TT::OpenBracket).is_some() {
                 let sub_nodes = self.seq()?;
-                nodes.push(UnresolvedNode::Defered(sub_nodes));
+                let span = sub_nodes
+                    .first()
+                    .zip(sub_nodes.last())
+                    .map(|(a, b)| a.span - b.span)
+                    .unwrap_or_else(|| Span::new(self.loc, self.loc));
+                nodes.push(span.sp(UnresolvedNode::Defered(sub_nodes)));
                 self.mat("]", TT::CloseBracket)?;
             } else {
                 break;
@@ -149,19 +165,19 @@ impl Parser {
     /// Match a definition
     fn def(&mut self) -> Result<(), ParseError> {
         // Match the colon and name
-        self.mat(":", TT::Colon)?;
+        let start = self.mat(":", TT::Colon)?.span.start;
         let name = self.mat("identifier", TT::ident)?;
+        // Match optional type parameters
+        let type_params = self.type_params()?;
         // Match an optional type signature
-        let sig = self.sig()?;
+        let sig = self.sig(type_params)?;
         // Match the nodes
         let nodes = self.seq()?;
         // Match the closing semicolon
         self.try_mat(";", TT::SemiColon);
-        self.defs.push(UnresolvedDef {
-            name: name.data,
-            sig,
-            nodes,
-        });
+        let end = self.loc;
+        self.defs
+            .push(Span::new(start, end).sp(UnresolvedDef { name, sig, nodes }));
         Ok(())
     }
     fn expected<T>(&mut self, expected: &'static str) -> Result<T, ParseError> {
@@ -170,14 +186,14 @@ impl Parser {
                 expected,
                 found: token.tt,
             }
-            .span(token.start, token.end)
+            .span(token.span)
         } else {
-            ParseErrorKind::Expected(expected).span(self.loc, self.loc)
+            ParseErrorKind::Expected(expected).span(Span::new(self.loc, self.loc))
         })
     }
 }
 
-pub fn parse<R>(input: R) -> Result<Vec<UnresolvedDef>, ParseError>
+pub fn parse<R>(input: R) -> Result<Vec<Sp<UnresolvedDef>>, ParseError>
 where
     R: Read,
 {
@@ -192,12 +208,6 @@ where
         parser.def()?;
     }
     Ok(parser.defs)
-}
-
-struct Spanned<T> {
-    data: T,
-    start: Loc,
-    end: Loc,
 }
 
 trait TTTransform {

@@ -4,14 +4,14 @@ use std::{
     io::{self, Read},
 };
 
-use crate::ast::*;
+use crate::{ast::*, span::*};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TT {
     Ident(String),
     Text(String),
     Bool(bool),
-    NatOrInt(u64),
+    Nat(u64),
     Int(i64),
     Float(f64),
     Char(char),
@@ -47,7 +47,7 @@ impl TT {
             TT::Ident(s) => UnresolvedNode::Ident(s),
             TT::Text(s) => UnresolvedNode::Literal(Literal::Text(s)),
             TT::Bool(b) => UnresolvedNode::Literal(Literal::Bool(b)),
-            TT::NatOrInt(n) => UnresolvedNode::Literal(Literal::NatOrInt(n)),
+            TT::Nat(n) => UnresolvedNode::Literal(Literal::Nat(n)),
             TT::Int(n) => UnresolvedNode::Literal(Literal::Int(n)),
             TT::Float(n) => UnresolvedNode::Literal(Literal::Float(n)),
             TT::Char(c) => UnresolvedNode::Literal(Literal::Char(c)),
@@ -62,7 +62,7 @@ impl fmt::Display for TT {
             TT::Ident(s) => s.fmt(f),
             TT::Text(s) => write!(f, "{:?}", s),
             TT::Bool(b) => b.fmt(f),
-            TT::NatOrInt(n) => n.fmt(f),
+            TT::Nat(n) => n.fmt(f),
             TT::Int(n) => n.fmt(f),
             TT::Float(n) => n.fmt(f),
             TT::Char(c) => c.fmt(f),
@@ -80,29 +80,10 @@ impl fmt::Display for TT {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Loc {
-    pub line: usize,
-    pub col: usize,
-}
-
-impl Loc {
-    pub fn new(line: usize, col: usize) -> Loc {
-        Loc { line, col }
-    }
-}
-
-impl fmt::Display for Loc {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.line, self.col)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Token {
     pub tt: TT,
-    pub start: Loc,
-    pub end: Loc,
+    pub span: Span,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -131,18 +112,16 @@ impl LexErrorKind {
     pub fn span(self, start: Loc, end: Loc) -> LexError {
         LexError {
             kind: self,
-            start,
-            end,
+            span: Span::new(start, end),
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("{kind} {end}")]
+#[error("{kind} {}", span.end)]
 pub struct LexError {
     pub kind: LexErrorKind,
-    pub start: Loc,
-    pub end: Loc,
+    pub span: Span,
 }
 
 fn found_char(found: Option<char>) -> String {
@@ -238,29 +217,31 @@ where
                 TT::Char(c)
             }
             // Num literals or double dash
-            c if c.is_digit(10) || c == '-' => {
-                let mut double_dash = false;
+            c if c.is_digit(10) || c == '-' || c == '+' => {
+                let mut non_number = None;
                 if c == '-' {
-                    let next = ok!(chars
-                        .next()
-                        .ok_or_else(|| LexErrorKind::ExpectedCharacter.span(start, loc!()))?);
-                    if next == '-' {
-                        // Check for fold
-                        if let Some(c) = chars.next() {
-                            if let Ok('-') = c {
-                                for _ in chars.by_ref() {}
-                                continue;
-                            } else {
-                                chars.put_back(c);
+                    if let Some(next) = chars.next() {
+                        let next = ok!(next);
+                        if next == '-' {
+                            // Check for fold
+                            if let Some(c) = chars.next() {
+                                if let Ok('-') = c {
+                                    for _ in chars.by_ref() {}
+                                    continue;
+                                } else {
+                                    chars.put_back(c);
+                                }
                             }
+                            non_number = Some(TT::DoubleDash);
+                        } else {
+                            chars.put_back(Ok(next));
                         }
-                        double_dash = true;
                     } else {
-                        chars.put_back(Ok(next));
+                        non_number = Some(TT::Ident("-".into()));
                     }
                 }
-                if double_dash {
-                    TT::DoubleDash
+                if let Some(tt) = non_number {
+                    tt
                 } else {
                     let mut s: String = c.into();
                     let mut period = false;
@@ -276,12 +257,14 @@ where
                             break;
                         }
                     }
-                    if period {
+                    if s == "-" || s == "+" {
+                        TT::Ident(s)
+                    } else if period {
                         TT::Float(ok!(s.parse()))
-                    } else if s.starts_with('-') {
+                    } else if s.starts_with('-') || s.starts_with('+') {
                         TT::Int(ok!(s.parse()))
                     } else {
-                        TT::NatOrInt(ok!(s.parse()))
+                        TT::Nat(ok!(s.parse()))
                     }
                 }
             }
@@ -354,8 +337,7 @@ where
         };
         tokens.push(Token {
             tt,
-            start,
-            end: Loc::new(line.get(), col.get()),
+            span: Span::new(start, Loc::new(line.get(), col.get())),
         });
     }
     if let Some(brack) = brackets.pop() {
