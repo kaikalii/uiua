@@ -143,7 +143,7 @@ impl Default for Defs {
             type_names: Default::default(),
             types: Default::default(),
         };
-        for &bi in Builtin::ALL {
+        for &bi in BuiltinDef::ALL {
             defs.insert_def(bi.name().into(), bi.into());
         }
         defs

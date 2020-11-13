@@ -2,7 +2,7 @@ use std::{fmt, mem};
 
 use sha3::*;
 
-use crate::{builtin::Builtin, span::*, types::*};
+use crate::{builtin::BuiltinDef, span::*, types::*};
 
 type HashInner =
     digest::generic_array::GenericArray<u8, digest::generic_array::typenum::consts::U32>;
@@ -46,8 +46,8 @@ impl Def {
     }
 }
 
-impl From<Builtin> for Def {
-    fn from(builtin: Builtin) -> Self {
+impl From<BuiltinDef> for Def {
+    fn from(builtin: BuiltinDef) -> Self {
         Def {
             sig: builtin.sig(),
             kind: DefKind::Builtin(builtin),
@@ -58,7 +58,7 @@ impl From<Builtin> for Def {
 #[derive(Debug, Clone)]
 pub enum DefKind {
     Uiua(Vec<Node>),
-    Builtin(Builtin),
+    Builtin(BuiltinDef),
 }
 
 #[derive(Debug, Clone)]

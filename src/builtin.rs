@@ -3,14 +3,14 @@ use crate::types::*;
 macro_rules! builtin {
     ($($(#[$doc:meta])? $name:ident,)*) => {
         #[derive(Debug, Clone, Copy)]
-        pub enum Builtin {
+        pub enum BuiltinDef {
             $(
                 $(#[$doc])*
                 $name
             ),*
         }
-        impl Builtin {
-            pub const ALL: &'static [Builtin] = &[$(Builtin::$name),*];
+        impl BuiltinDef {
+            pub const ALL: &'static [BuiltinDef] = &[$(BuiltinDef::$name),*];
         }
     };
 }
@@ -46,26 +46,26 @@ fn u() -> Type {
     generic("U", 1)
 }
 
-impl Builtin {
+impl BuiltinDef {
     pub fn sig(&self) -> Signature {
         let (before, after) = match self {
-            Builtin::Dup => (vec![t()], vec![t(); 2]),
-            Builtin::List => (vec![], vec![generic_list()]),
-            Builtin::App => (vec![generic_list(), t()], vec![generic_list()]),
-            Builtin::Swap => (vec![t(), u()], vec![u(), t()]),
-            Builtin::Add => (vec![t(); 2], vec![t()]),
-            Builtin::Pop => (vec![t()], vec![]),
+            BuiltinDef::Dup => (vec![t()], vec![t(); 2]),
+            BuiltinDef::List => (vec![], vec![generic_list()]),
+            BuiltinDef::App => (vec![generic_list(), t()], vec![generic_list()]),
+            BuiltinDef::Swap => (vec![t(), u()], vec![u(), t()]),
+            BuiltinDef::Add => (vec![t(); 2], vec![t()]),
+            BuiltinDef::Pop => (vec![t()], vec![]),
         };
         Signature::new(before, after)
     }
     pub fn name(&self) -> &'static str {
         match self {
-            Builtin::Dup => "dup",
-            Builtin::List => "list",
-            Builtin::App => "app",
-            Builtin::Swap => "swap",
-            Builtin::Add => "+",
-            Builtin::Pop => "pop",
+            BuiltinDef::Dup => "dup",
+            BuiltinDef::List => "list",
+            BuiltinDef::App => "app",
+            BuiltinDef::Swap => "swap",
+            BuiltinDef::Add => "+",
+            BuiltinDef::Pop => "pop",
         }
     }
 }
