@@ -154,30 +154,35 @@ impl Signature {
         generics
     }
     pub fn compose(&self, b: &Self) -> Result<Self, TypeError> {
+        // println!();
         let mut a = self.clone();
         let mut b = b.clone();
+        // Make b's generics different than a's
+        let add_to_b = a.generics().last().copied().unwrap_or(0)
+            - b.generics().first().copied().unwrap_or(0)
+            + 1;
+        // println!("b + {}", add_to_b);
+        for ty in &mut b.before {
+            transform_type(ty, &|ty| {
+                if let Type::Generic(g) = ty {
+                    g.index += add_to_b;
+                }
+            });
+        }
+        for ty in &mut b.after {
+            transform_type(ty, &|ty| {
+                if let Type::Generic(g) = ty {
+                    g.index += add_to_b;
+                }
+            });
+        }
         // Loop over the reversed outputs of a zipped with the reversed inputs of b
         let mut i = 0;
         loop {
             if a.after.len() > i && b.before.len() > i {
-                // Make b's generics different than a's
-                let add_to_b = a.generics().last().copied().unwrap_or(0)
-                    - a.generics().first().copied().unwrap_or(0)
-                    + 1;
-                for ty in &mut b.before {
-                    transform_type(ty, &|ty| {
-                        if let Type::Generic(g) = ty {
-                            g.index += add_to_b;
-                        }
-                    });
-                }
-                for ty in &mut b.after {
-                    transform_type(ty, &|ty| {
-                        if let Type::Generic(g) = ty {
-                            g.index += add_to_b;
-                        }
-                    });
-                }
+                // println!();
+                // println!("a {}", a);
+                // println!("b {}", b);
                 let a_len = a.after.len();
                 let b_len = b.before.len();
                 let a_after = &mut a.after[a_len - 1 - i];
@@ -191,6 +196,7 @@ impl Signature {
                 }
                 trade_generics(a_after, b_before, &mut conv);
                 for (g, new) in conv {
+                    // println!("{} -> {}", g, new);
                     for ty in &mut a.before {
                         set_generic(ty, g, &new);
                     }
@@ -204,6 +210,8 @@ impl Signature {
                         set_generic(ty, g, &new);
                     }
                 }
+                // println!("a {}", a);
+                // println!("b {}", b);
                 let a_after = &a.after[a_len - 1 - i];
                 let b_before = &b.before[b_len - 1 - i];
                 if a_after != b_before {
@@ -232,7 +240,9 @@ impl Signature {
             .chain(&b.after)
             .cloned()
             .collect();
-        Ok(Signature::new(before, after))
+        let sig = Signature::new(before, after);
+        // println!("ab {}", sig);
+        Ok(sig)
     }
 }
 
