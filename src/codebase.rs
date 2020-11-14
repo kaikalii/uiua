@@ -81,7 +81,7 @@ impl CodeBase {
             unresolved_items = unresolved_items
                 .into_iter()
                 .filter_map(|(unresolved, _)| match &unresolved {
-                    UnresolvedItem::Word(uw) => match resolve_word(&uw, &defs) {
+                    UnresolvedItem::Word(uw) => match resolve_word(&uw, &mut defs) {
                         Ok(word) => {
                             println!("{} {}", uw.name.data, word.sig);
                             defs.words
@@ -176,7 +176,7 @@ impl Default for Defs {
             types: ItemDefs::new(&uses),
             uses,
         };
-        for &word in BuiltinWord::all().iter() {
+        for &word in BuiltinWord::ALL_SIMPLE.iter() {
             defs.words.insert(word.ident(), word.into());
         }
         defs
@@ -227,10 +227,11 @@ where
     pub fn by_hash(&self, hash: &Hash) -> Option<&T> {
         self.items.get(hash).map(|(item, _)| item)
     }
-    pub fn insert(&mut self, ident: Ident, item: T) {
+    pub fn insert(&mut self, ident: Ident, item: T) -> Hash {
         let hash = item.hash_finish();
         self.hashes.entry(ident.clone()).or_default().insert(hash);
         self.items.insert(hash, (item, ident));
+        hash
     }
 }
 

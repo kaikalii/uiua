@@ -1,8 +1,8 @@
 use itertools::*;
 
-use crate::{ast::*, codebase::*, span::*, types::*};
+use crate::{ast::*, builtin::*, codebase::*, span::*, types::*};
 
-pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
+pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &mut Defs) -> SpResult<Word, ResolutionError> {
     let given_sig = if let Some(sig) = &word.sig {
         Some(resolve_sig(sig, defs, &word.params)?)
     } else {
@@ -18,7 +18,7 @@ pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, Re
 
 pub fn resolve_sequence(
     nodes: &[Sp<UnresolvedNode>],
-    defs: &Defs,
+    defs: &mut Defs,
     name: &Sp<String>,
     given_sig: Option<Sp<&Signature>>,
 ) -> SpResult<(Vec<Sp<Node>>, Signature), ResolutionError> {
@@ -69,14 +69,14 @@ pub fn resolve_sequence(
                     } else if ident.single_and_eq("?") {
                         // Ifs
                         if let Some(sig) = &sig {
-                            resolve_magic(defs, '?', node.span, &sig)?
+                            resolve_magic(defs, BuiltinWord::If, node.span, &sig)?
                         } else {
                             return Err(node.span.sp(ResolutionError::IfAtStart));
                         }
                     } else if ident.single_and_eq("!") {
                         // Calls
                         if let Some(sig) = &sig {
-                            resolve_magic(defs, '!', node.span, &sig)?
+                            resolve_magic(defs, BuiltinWord::Call, node.span, &sig)?
                         } else {
                             return Err(node.span.sp(ResolutionError::CallAtStart));
                         }
@@ -140,23 +140,19 @@ pub fn resolve_sequence(
     Ok((resolved_nodes, sig))
 }
 
-fn resolve_magic(
-    defs: &Defs,
-    magic_char: char,
+fn resolve_magic<F>(
+    defs: &mut Defs,
+    handler: F,
     span: Span,
     sig: &Sp<Signature>,
-) -> SpResult<Sp<Hash>, ResolutionError> {
+) -> SpResult<Sp<Hash>, ResolutionError>
+where
+    F: Fn(u8, u8) -> BuiltinWord,
+{
     if let Some(last) = sig.after.last() {
         if let Type::Prim(Primitive::Quotation(sig)) = last {
-            Ok(span.sp(*defs
-                .words
-                .by_ident(&Ident::module(
-                    "quote".into(),
-                    format!("{}{}--{}", magic_char, sig.before.len(), sig.after.len()),
-                ))
-                .next()
-                .unwrap()
-                .0))
+            let builtin = handler(sig.before.len() as u8, sig.after.len() as u8);
+            Ok(span.sp(defs.words.insert(builtin.ident(), builtin.into())))
         } else {
             Err(span.sp(ResolutionError::ExpectedQuotation {
                 found: last.clone(),
@@ -249,7 +245,7 @@ pub fn resolve_prim(
 pub enum ResolutionError {
     #[error(
         "{ident} expects a before state ({}),\n\
-        but the words before it have after state ({})",
+        but the words before it have an after state of ({})",
         format_state(&output.before),
         format_state(&input.after)
     )]

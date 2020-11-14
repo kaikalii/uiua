@@ -1,6 +1,5 @@
 use std::{iter::once, mem};
 
-use once_cell::sync::Lazy;
 use sha3::*;
 
 use crate::{ast::*, types::*};
@@ -21,22 +20,10 @@ macro_rules! builtin_words {
             If(u8, u8),
         }
         impl BuiltinWord {
-            const ALL_SIMPLE: &'static [BuiltinWord] = &[$(BuiltinWord::$name),*];
+            pub const ALL_SIMPLE: &'static [BuiltinWord] = &[$(BuiltinWord::$name),*];
         }
     };
 }
-
-static ALL_BUILTIN_DEFS: Lazy<Vec<BuiltinWord>> = Lazy::new(|| {
-    BuiltinWord::ALL_SIMPLE
-        .iter()
-        .copied()
-        .chain((0..10).flat_map(|bef| {
-            (0..10).flat_map(move |aft| {
-                once(BuiltinWord::Call(bef, aft)).chain(once(BuiltinWord::If(bef, aft)))
-            })
-        }))
-        .collect()
-});
 
 builtin_words!(
     /// Duplicate
@@ -68,9 +55,6 @@ fn b() -> Type {
 }
 
 impl BuiltinWord {
-    pub fn all() -> &'static Lazy<Vec<Self>> {
-        &ALL_BUILTIN_DEFS
-    }
     pub fn sig(&self) -> Signature {
         let (before, after) = match self {
             BuiltinWord::Dup => (vec![a()], vec![a(); 2]),
