@@ -1,6 +1,7 @@
 use std::{
     fmt,
     io::{self, Read},
+    iter::Peekable,
 };
 
 use crate::{ast::*, span::*};
@@ -140,8 +141,7 @@ struct Lexer<R>
 where
     R: Read,
 {
-    tokens: Vec<Token>,
-    chars: unicode_reader::CodePoints<io::Bytes<R>>,
+    chars: Peekable<unicode_reader::CodePoints<io::Bytes<R>>>,
     brackets: Vec<char>,
     loc: Loc,
     start: Loc,
@@ -172,9 +172,13 @@ where
             None
         }
     }
-    fn handle_char(&mut self, c: Result<char, LexError>) -> Result<(), LexError> {
+    fn next_token(&mut self) -> Result<Option<Token>, LexError> {
+        let c = if let Some(c) = self.try_next_char() {
+            c?
+        } else {
+            return Ok(None);
+        };
         self.start = self.loc;
-        let c = c?;
         let tt = match c {
             // String literals
             '"' => {
@@ -218,38 +222,6 @@ where
                     .span(self.start, self.loc));
                 }
                 TT::Char(c)
-            }
-            // Num literals or double dash
-            c if c.is_digit(10) || c == '-' || c == '+' => {
-                let mut non_number = None;
-                if c == '-' {
-                    if let Some(next) = self.try_next_char() {
-                        let next = next?;
-                        if next == '-' {
-                            // Check for fold
-                            if let Some(c) = self.try_next_char() {
-                                let c = c?;
-                                if c == '-' {
-                                    for _ in self.chars.by_ref() {}
-                                    return Ok(());
-                                } else {
-                                    let tt = self.finish_number(c, Some(TT::DoubleDash))?;
-                                    self.push_tt(tt);
-                                    self.handle_char(Ok(c))?;
-                                    return Ok(());
-                                }
-                            }
-                        } else {
-                            let tt = self.finish_number(c, non_number)?;
-                            self.push_tt(tt);
-                            self.handle_char(Ok(next))?;
-                            return Ok(());
-                        }
-                    } else {
-                        non_number = Some(TT::Ident("-".into()));
-                    }
-                }
-                self.finish_number(c, non_number)?
             }
             // Brackets
             '[' => {
@@ -299,85 +271,52 @@ where
             '~' => TT::Tilde,
             '.' => TT::Period,
             '=' => TT::Equals,
-            c if c.is_whitespace() => return Ok(()),
+            c if c.is_whitespace() => return self.next_token(),
             // Idents and others
             c if ident_char(c) => {
                 let mut s: String = c.into();
-                while let Some(c) = self.try_next_char() {
-                    let c = c?;
+                while let Some(Ok(c)) = self.chars.peek() {
+                    let c = *c;
                     if ident_char(c) {
+                        self.next_char()?;
                         s.push(c);
                     } else {
-                        self.push_tt_drop_col(ident_str_as_tt(s));
-                        self.handle_char(Ok(c))?;
-                        return Ok(());
+                        break;
                     }
                 }
-                ident_str_as_tt(s)
+                if let (true, Ok(i)) = (s.starts_with('-') || s.starts_with('+'), s.parse::<i64>())
+                {
+                    TT::Int(i)
+                } else if let Ok(n) = s.parse::<u64>() {
+                    TT::Nat(n)
+                } else if let Ok(f) = s.parse::<f64>() {
+                    TT::Float(f)
+                } else {
+                    match s.as_str() {
+                        "true" => TT::Bool(true),
+                        "false" => TT::Bool(false),
+                        "data" => TT::Data,
+                        "--" => TT::DoubleDash,
+                        "---" => {
+                            while self.try_next_char().is_some() {}
+                            return Ok(None);
+                        }
+                        _ => TT::Ident(s),
+                    }
+                }
             }
             c => return Err(LexErrorKind::InvalidCharacter(c).span(self.start, self.loc)),
         };
-        self.push_tt(tt);
-        Ok(())
-    }
-    fn push_tt_drop_col(&mut self, tt: TT) {
-        let mut end = self.loc;
-        end.col = end.col.saturating_sub(1);
-        self.tokens.push(Token {
-            tt,
-            span: Span::new(self.start, end),
-        })
-    }
-    fn push_tt(&mut self, tt: TT) {
-        assert!(self.start <= self.loc);
-        self.tokens.push(Token {
+        Ok(Some(Token {
             tt,
             span: Span::new(self.start, self.loc),
-        })
-    }
-    fn finish_number(&mut self, c: char, non_number: Option<TT>) -> Result<TT, LexError> {
-        Ok(if let Some(tt) = non_number {
-            tt
-        } else {
-            let mut s: String = c.into();
-            let mut period = false;
-            while let Some(c) = self.try_next_char() {
-                let c = c?;
-                if c.is_digit(10) || c == '.' && !period {
-                    if c == '.' {
-                        period = true;
-                    }
-                    s.push(c);
-                } else {
-                    self.handle_char(Ok(c))?;
-                    break;
-                }
-            }
-            if s == "-" || s == "+" {
-                TT::Ident(s)
-            } else if period {
-                TT::Float(self.span_res(s.parse())?)
-            } else if s.starts_with('-') || s.starts_with('+') {
-                TT::Int(self.span_res(s.parse())?)
-            } else {
-                TT::Nat(self.span_res(s.parse())?)
-            }
-        })
+        }))
     }
     fn span_res<T, E>(&self, res: Result<T, E>) -> Result<T, LexError>
     where
         E: Into<LexErrorKind>,
     {
         res.map_err(|e| e.into().span(self.start, self.loc))
-    }
-}
-
-fn ident_str_as_tt(s: String) -> TT {
-    match s.as_str() {
-        "true" => TT::Bool(true),
-        "false" => TT::Bool(false),
-        "data" => TT::Data,
-        _ => TT::Ident(s),
     }
 }
 
@@ -389,16 +328,16 @@ where
         loc: Loc::new(1, 0),
         start: Loc::new(1, 0),
         brackets: Vec::new(),
-        chars: unicode_reader::CodePoints::from(input.bytes()),
-        tokens: Vec::new(),
+        chars: unicode_reader::CodePoints::from(input.bytes()).peekable(),
     };
-    while let Some(c) = lexer.try_next_char() {
-        lexer.handle_char(c)?;
+    let mut tokens = Vec::new();
+    while let Some(c) = lexer.next_token()? {
+        tokens.push(c);
     }
     if let Some(brack) = lexer.brackets.pop() {
         return Err(LexErrorKind::UnmatchedBracket(brack).span(lexer.start, lexer.loc));
     }
-    Ok(lexer.tokens)
+    Ok(tokens)
 }
 
 fn escaped_char(c: char) -> Result<char, LexErrorKind> {
