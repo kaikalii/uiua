@@ -25,12 +25,12 @@ pub fn resolve_sequence(
     let mut resolved_nodes = Vec::new();
     let mut sig: Option<Sp<Signature>> = None;
     macro_rules! compose {
-        ($next:expr) => {{
+        ($next:expr, $name:expr) => {{
             let next = $next;
             sig = Some(if let Some(sig) = sig {
                 next.span.sp(sig
                     .compose(&next.data)
-                    .map_err(|e| next.span.sp(e.name(name.data.clone())))?)
+                    .map_err(|e| next.span.sp(e.name($name)))?)
             } else {
                 next
             });
@@ -46,7 +46,7 @@ pub fn resolve_sequence(
                             .map(Ident::no_module)
                             .map(ResolutionError::RecursiveNoSignature)
                     })?;
-                    compose!(node_sig);
+                    compose!(node_sig, ident.to_string());
                     resolved_nodes.push(node.span.sp(Node::SelfIdent));
                 } else {
                     // General word lookup
@@ -96,19 +96,28 @@ pub fn resolve_sequence(
                         .words
                         .by_hash(&hash)
                         .expect("word that was already found isn't present");
-                    compose!(node.span.sp(word.sig.clone()));
+                    compose!(node.span.sp(word.sig.clone()), ident.to_string());
                     resolved_nodes.push(hash.map(Node::Ident));
                 }
             }
             UnresolvedNode::Literal(lit) => {
                 let node_sig = Signature::new(vec![], vec![lit.as_primitive().into()]);
-                compose!(node.span.sp(node_sig));
+                #[allow(unreachable_code)]
+                {
+                    compose!(node.span.sp(node_sig), panic!("literal composition failed"));
+                }
                 resolved_nodes.push(node.span.sp(Node::Literal(lit.clone())))
             }
             UnresolvedNode::Quotation(sub_nodes) => {
                 let (sub_nodes, sub_sig) = resolve_sequence(sub_nodes, defs, name, None)?;
                 let node_sig = Signature::new(vec![], vec![Primitive::Quotation(sub_sig).into()]);
-                compose!(node.span.sp(node_sig));
+                #[allow(unreachable_code)]
+                {
+                    compose!(
+                        node.span.sp(node_sig),
+                        panic!("quotation composition failed")
+                    );
+                }
                 resolved_nodes.push(node.span.sp(Node::Quotation(sub_nodes)));
             }
         }
@@ -239,8 +248,8 @@ pub fn resolve_prim(
 #[derive(Debug, thiserror::Error)]
 pub enum ResolutionError {
     #[error(
-        "{ident} expects an input state ({}),\n\
-        but the words before it have output state ({})",
+        "{ident} expects a before state ({}),\n\
+        but the words before it have after state ({})",
         format_state(&output.before),
         format_state(&input.after)
     )]
@@ -255,7 +264,7 @@ pub enum ResolutionError {
     UnknownType(Ident),
     #[error(
         "Incompatible word \"{ident}\"\n\
-        \"{ident}\" exists, but no versions of it are compatible with the input state ({})",
+        \"{ident}\" exists, but no versions of it are compatible with the before state ({})",
         format_state(&input_sig.after)
     )]
     IncompatibleWord { ident: Ident, input_sig: Signature },
