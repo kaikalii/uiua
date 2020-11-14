@@ -257,7 +257,7 @@ pub enum ResolutionError {
     UnknownType(Ident),
     #[error(
         "Incompatible word \"{ident}\"\n\
-        \"{ident}\" exists, but no versions of it are compatible with the input type {}",
+        \"{ident}\" exists, but no versions of it are compatible with the input state ({})",
         format_state(&input_sig.after)
     )]
     IncompatibleWord { ident: Ident, input_sig: Signature },

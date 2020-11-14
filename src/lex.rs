@@ -156,19 +156,21 @@ where
             .unwrap_or_else(|| Err(LexErrorKind::ExpectedCharacter.span(self.start, self.loc)))
     }
     fn try_next_char(&mut self) -> Option<Result<char, LexError>> {
-        self.chars.next().map(|res| {
-            match res {
+        if let Some(c) = self.chars.next() {
+            match c {
                 Ok('\n') => {
                     self.loc.line += 1;
                     self.loc.col = 0;
                 }
-                Ok('\r') => {}
                 Ok('\t') => self.loc.col += 4,
                 Ok(_) => self.loc.col += 1,
                 Err(_) => {}
             }
-            self.span_res(res)
-        })
+            Some(self.span_res(c))
+        } else {
+            self.loc.col += 1;
+            None
+        }
     }
     fn handle_char(&mut self, c: Result<char, LexError>) -> Result<(), LexError> {
         self.start = self.loc;
