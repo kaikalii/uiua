@@ -83,18 +83,26 @@ impl CodeBase {
                 .filter_map(|(unresolved, _)| match &unresolved {
                     UnresolvedItem::Word(uw) => match resolve_word(&uw, &defs) {
                         Ok(word) => {
-                            println!("{} {}", uw.data.name.data, word.sig);
+                            println!("{} {}", uw.name.data, word.sig);
                             defs.words
-                                .insert(Ident::no_module(uw.data.name.data.clone()), word);
+                                .insert(Ident::no_module(uw.name.data.clone()), word);
                             None
                         }
                         Err(e) => Some((unresolved, Some(e))),
                     },
                     UnresolvedItem::Rule(ur) => match resolve_rule(&ur, &defs) {
                         Ok(rule) => {
-                            println!("{} {}", ur.data.name.data, rule.sig);
+                            println!("{} {}", ur.name.data, rule.sig);
                             defs.rules
-                                .insert(Ident::no_module(ur.data.name.data.clone()), rule);
+                                .insert(Ident::no_module(ur.name.data.clone()), rule);
+                            None
+                        }
+                        Err(e) => Some((unresolved, Some(e))),
+                    },
+                    UnresolvedItem::Follow(uf) => match resolve_follow(&uf, &defs) {
+                        Ok(follow) => {
+                            println!("{} {:?}", uf.rule_name.data, follow.bound);
+                            defs.follows.insert(uf.rule_name.data.clone(), follow);
                             None
                         }
                         Err(e) => Some((unresolved, Some(e))),
@@ -169,16 +177,18 @@ pub enum CodeBaseError {
 #[derive(Debug)]
 pub struct Defs {
     pub words: ItemDefs<Word>,
-    pub rules: ItemDefs<Rule>,
     pub types: ItemDefs<Type>,
+    pub rules: ItemDefs<Rule>,
+    pub follows: ItemDefs<Follow>,
 }
 
 impl Default for Defs {
     fn default() -> Self {
         let mut defs = Defs {
             words: Default::default(),
-            rules: Default::default(),
             types: Default::default(),
+            rules: Default::default(),
+            follows: Default::default(),
         };
         for &word in BuiltinWord::all().iter() {
             defs.words.insert(word.ident(), word.into());

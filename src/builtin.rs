@@ -1,8 +1,9 @@
-use std::iter::once;
+use std::{iter::once, mem};
 
 use once_cell::sync::Lazy;
+use sha3::*;
 
-use crate::{ast::Ident, types::*};
+use crate::{ast::*, types::*};
 
 macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
@@ -123,6 +124,13 @@ impl BuiltinWord {
     }
 }
 
+impl TreeHash for BuiltinWord {
+    fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
+        sha.update(unsafe { mem::transmute::<_, [u8; 3]>(*self) });
+    }
+}
+
 macro_rules! builtin_rule {
     ($($(#[$doc:meta])? $name:ident,)*) => {
         #[derive(Debug, Clone, Copy)]
@@ -157,6 +165,21 @@ impl BuiltinRule {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BuiltinFollow {
+    pub rule: BuiltinRule,
+    pub types: Vec<Type>,
+}
+
+impl TreeHash for BuiltinFollow {
+    fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(&self.rule)) });
+        for ty in &self.types {
+            ty.hash(sha);
+        }
+    }
+}
+
 #[derive(Default)]
 struct DefaultParams {
     i: u8,
@@ -168,7 +191,7 @@ impl Iterator for DefaultParams {
         if self.i < 26 {
             self.i += 1;
             Some(Type::Generic(Generic::new(
-                (b'A' + self.i - 1) as char,
+                (b'a' + self.i - 1) as char,
                 self.i - 1,
             )))
         } else {

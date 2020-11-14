@@ -88,7 +88,8 @@ impl Parser {
     /// Match a type
     fn ty(
         &mut self,
-        type_params: &UnresolvedTypeParams,
+        params: &Sp<UnresolvedParams>,
+        bounds: &Sp<UnresolvedBounds>,
     ) -> Result<Option<Sp<UnresolvedType>>, ParseError> {
         Ok(if let Some(ident) = self.ident()? {
             Some(ident.span.sp(match (&ident.module, ident.name.as_str()) {
@@ -101,57 +102,90 @@ impl Parser {
             }))
         } else if let Some(open_bracket) = self.try_mat(TT::OpenBracket) {
             let start = open_bracket.span.start;
-            if let Some(ty) = self.ty(type_params)? {
+            if let Some(ty) = self.ty(params, bounds)? {
                 let end = self.mat("]", TT::CloseBracket)?.span.end;
                 Some(Span::new(start, end).sp(UnresolvedType::Prim(Primitive::List(Box::new(ty)))))
             } else {
                 return self.expected("type");
             }
-        } else if let Some(sig) = self.sig(type_params.clone())? {
+        } else if let Some(sig) = self.sig(params.clone(), bounds.clone())? {
             Some(sig.map(|sig| UnresolvedType::Prim(Primitive::Quotation(sig))))
         } else {
             return Ok(None);
         })
     }
     /// Match type parameter declaration
-    fn type_params(&mut self) -> Result<UnresolvedTypeParams, ParseError> {
+    fn params(&mut self) -> Result<Sp<UnresolvedParams>, ParseError> {
         let start = self.loc;
+        let mut end = start;
         // Match type params names
         let mut names = Vec::new();
-        let mut end = start;
         while let Some(name) = self.try_mat(TT::ident) {
             end = name.span.end;
             names.push(name);
         }
         Ok(Span::new(start, end).sp(names))
     }
+    /// Match bound declarations
+    fn bounds(
+        &mut self,
+        params: &Sp<UnresolvedParams>,
+    ) -> Result<Sp<UnresolvedBounds>, ParseError> {
+        let start = self.loc;
+        let mut end = start;
+        // Match braced bounds
+        let mut bounds = Vec::new();
+        while let Some(open_curly) = self.try_mat(TT::OpenCurly) {
+            let bound_start = open_curly.span.start;
+            let rule_ident = if let Some(ident) = self.ident()? {
+                ident
+            } else {
+                return self.expected("rule name");
+            };
+            let empty_bounds = params.span.sp(Vec::new());
+            let first = if let Some(ty) = self.ty(params, &empty_bounds)? {
+                ty
+            } else {
+                return self.expected("type");
+            };
+            let mut types = vec![first];
+            while let Some(ty) = self.ty(params, &empty_bounds)? {
+                types.push(ty);
+            }
+            let close_curly = self.mat('}', TT::CloseCurly)?;
+            end = close_curly.span.end;
+            bounds.push(Span::new(bound_start, end).sp(UnresolvedBound { rule_ident, types }));
+        }
+        Ok(Span::new(start, end).sp(bounds))
+    }
     /// Match a type signature
     fn sig(
         &mut self,
-        type_params: UnresolvedTypeParams,
-    ) -> Result<Option<UnresolvedSignature>, ParseError> {
+        params: Sp<UnresolvedParams>,
+        bounds: Sp<UnresolvedBounds>,
+    ) -> Result<Option<Sp<UnresolvedSignature>>, ParseError> {
         Ok(if let Some(open_paren) = self.try_mat(TT::OpenParen) {
             let start = open_paren.span.start;
             // Match before args types
             let mut before = Vec::new();
-            while let Some(ty) = self.ty(&type_params)? {
+            while let Some(ty) = self.ty(&params, &bounds)? {
                 before.push(ty);
             }
             // Match double dash
             self.mat("--", TT::DoubleDash)?;
             // Match after args types
             let mut after = Vec::new();
-            while let Some(ty) = self.ty(&type_params)? {
+            while let Some(ty) = self.ty(&params, &bounds)? {
                 after.push(ty);
             }
             // Match closing paren
             let end = self.mat(')', TT::CloseParen)?.span.end;
-            Some(Span::new(start, end).sp(Signature::with_bounds(type_params, before, after)))
+            Some(Span::new(start, end).sp(Signature::explicit(params, bounds, before, after)))
         } else {
             None
         })
     }
-    /// Match a sequence of terms
+    /// Match a sequence of words
     fn seq(&mut self) -> Result<Vec<Sp<UnresolvedNode>>, ParseError> {
         let mut nodes = Vec::new();
         loop {
@@ -179,10 +213,12 @@ impl Parser {
         let start = colon.span.start;
         // Match the name
         let name = self.mat("identifier", TT::ident)?;
-        // Match optional type parameters
-        let type_params = self.type_params()?;
+        // Match type parameters
+        let params = self.params()?;
+        // Match type bounds
+        let bounds = self.bounds(&params)?;
         // Match an optional type signature
-        let sig = self.sig(type_params)?;
+        let sig = self.sig(params, bounds)?;
         // Match equals sign
         self.mat('=', TT::Equals)?;
         // Match the nodes
@@ -196,10 +232,11 @@ impl Parser {
     fn rule(&mut self, rule: Sp<()>) -> Result<Sp<UnresolvedRule>, ParseError> {
         let start = rule.span.start;
         // Match the name
-        let name = self.mat("identifier", TT::ident)?;
+        let name = self.mat("rule name", TT::ident)?;
         // Match signature
-        let type_params = self.type_params()?;
-        let sig = if let Some(sig) = self.sig(type_params)? {
+        let params = self.params()?;
+        let bounds = self.bounds(&params)?;
+        let sig = if let Some(sig) = self.sig(params, bounds)? {
             sig
         } else {
             return self.expected("signature");
@@ -211,12 +248,44 @@ impl Parser {
             sig,
         }))
     }
+    /// Match a follow
+    fn follow(&mut self, follow: Sp<()>) -> Result<Sp<UnresolvedFollow>, ParseError> {
+        let start = follow.span.start;
+        // Match the rule name
+        let rule_name = if let Some(ident) = self.ident()? {
+            ident
+        } else {
+            return self.expected("rule name");
+        };
+        // Match follow parameters
+        let mut params = Vec::new();
+        let params_start = rule_name.span.end;
+        let mut params_end = params_start;
+        while let Some(ident) = self.ident()? {
+            params_end = ident.span.end;
+            params.push(ident);
+        }
+        // Match equals sign
+        let mut end = self.mat('=', TT::Equals)?.span.end;
+        // Match the nodes
+        let nodes = self.seq()?;
+        if let Some(node) = nodes.last() {
+            end = node.span.end;
+        }
+        Ok(Span::new(start, end).sp(UnresolvedFollow {
+            rule_name,
+            params: Span::new(params_start, params_end).sp(params),
+            nodes,
+        }))
+    }
     /// Match an item
     fn item(&mut self) -> Result<UnresolvedItem, ParseError> {
         Ok(if let Some(colon) = self.try_mat(TT::Colon) {
             UnresolvedItem::Word(self.word(colon)?)
+        } else if let Some(follow) = self.try_mat(TT::Follow) {
+            UnresolvedItem::Follow(self.follow(follow)?)
         } else {
-            let rule = self.mat([":", "rule"].as_ref(), TT::Rule)?;
+            let rule = self.mat([":", "rule", "follow"].as_ref(), TT::Rule)?;
             UnresolvedItem::Rule(self.rule(rule)?)
         })
     }

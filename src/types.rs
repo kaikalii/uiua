@@ -94,7 +94,7 @@ impl Ord for Generic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Primitive<T = Type, B = TypeParams> {
+pub enum Primitive<T = Type, P = Params, B = Bounds> {
     Unit,
     Bool,
     Nat,
@@ -103,10 +103,11 @@ pub enum Primitive<T = Type, B = TypeParams> {
     Char,
     Text,
     List(Box<T>),
-    Quotation(Signature<T, B>),
+    Quotation(Signature<T, P, B>),
 }
 
-pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>, UnresolvedTypeParams>;
+pub type UnresolvedPrimitive =
+    Primitive<Sp<UnresolvedType>, Sp<UnresolvedParams>, Sp<UnresolvedBounds>>;
 
 impl<T> Primitive<T> {
     pub fn list(inner: T) -> Self {
@@ -142,30 +143,48 @@ impl fmt::Display for Primitive {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeBound {
-    pub name: String,
+pub struct Bound {
+    pub rule: Hash,
+    pub ident: Ident,
+    pub types: Vec<Type>,
 }
 
-impl fmt::Display for TypeBound {
+impl fmt::Display for Bound {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.name)
+        write!(f, "{{ ")?;
+        write!(f, "{} ", self.ident)?;
+        for ty in &self.types {
+            write!(f, "{} ", ty)?;
+        }
+        write!(f, "}}")
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Signature<T = Type, B = TypeParams> {
+pub struct UnresolvedBound {
+    pub rule_ident: Sp<Ident>,
+    pub types: Vec<Sp<UnresolvedType>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature<T = Type, P = Params, B = Bounds> {
+    pub params: P,
     pub bounds: B,
     pub before: Vec<T>,
     pub after: Vec<T>,
 }
 
-pub type TypeParams = Vec<TypeBound>;
-pub type UnresolvedTypeParams = Sp<Vec<Sp<String>>>;
-pub type UnresolvedSignature = Sp<Signature<Sp<UnresolvedType>, UnresolvedTypeParams>>;
+pub type Params = Vec<String>;
+pub type Bounds = Vec<Bound>;
+pub type UnresolvedParams = Vec<Sp<String>>;
+pub type UnresolvedBounds = Vec<Sp<UnresolvedBound>>;
+pub type UnresolvedSignature =
+    Signature<Sp<UnresolvedType>, Sp<UnresolvedParams>, Sp<UnresolvedBounds>>;
 
-impl<T, B> Signature<T, B> {
-    pub fn with_bounds(bounds: B, before: Vec<T>, after: Vec<T>) -> Self {
+impl<T, P, B> Signature<T, P, B> {
+    pub fn explicit(params: P, bounds: B, before: Vec<T>, after: Vec<T>) -> Self {
         Signature {
+            params,
             bounds,
             before,
             after,
@@ -175,29 +194,22 @@ impl<T, B> Signature<T, B> {
 
 impl Signature {
     pub fn new(before: Vec<Type>, after: Vec<Type>) -> Self {
-        let mut sig = Signature::with_bounds(Vec::new(), before, after);
+        let mut sig = Signature::explicit(Vec::new(), Vec::new(), before, after);
         let reassign: HashMap<u8, u8> = sig
             .generics()
             .into_iter()
             .enumerate()
             .map(|(i, g)| (g, i as u8))
             .collect();
-        let bounds = &mut sig.bounds;
+        let params = &mut sig.params;
         for ty in sig.before.iter_mut().chain(&mut sig.after) {
             transform_type(ty, &mut |ty| {
                 if let Type::Generic(g) = ty {
                     g.index = reassign[&g.index];
-                    if bounds.len() <= g.index as usize {
-                        bounds.resize(
-                            g.index as usize + 1,
-                            TypeBound {
-                                name: String::new(),
-                            },
-                        );
+                    if params.len() <= g.index as usize {
+                        params.resize(g.index as usize + 1, String::new());
                     }
-                    bounds[g.index as usize] = TypeBound {
-                        name: g.name.clone(),
-                    };
+                    params[g.index as usize] = g.name.clone();
                 }
             });
         }
@@ -443,8 +455,8 @@ where
 
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for bound in &self.bounds {
-            write!(f, "{} ", bound)?;
+        for param in &self.params {
+            write!(f, "{} ", param)?;
         }
         write!(f, "( ")?;
         for ty in &self.before {
