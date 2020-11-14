@@ -119,6 +119,7 @@ pub enum UnresolvedItem {
 #[derive(Debug, Clone)]
 pub struct UnresolvedWord {
     pub name: Sp<String>,
+    pub params: Sp<UnresolvedParams>,
     pub sig: Option<Sp<UnresolvedSignature>>,
     pub nodes: Vec<Sp<UnresolvedNode>>,
 }

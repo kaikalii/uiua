@@ -4,7 +4,7 @@ use crate::{ast::*, codebase::*, span::*, types::*};
 
 pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
     let given_sig = if let Some(sig) = &word.sig {
-        Some(resolve_sig(sig, defs, &sig.params)?)
+        Some(resolve_sig(sig, defs, &word.params)?)
     } else {
         None
     };
@@ -177,11 +177,7 @@ pub fn resolve_sig(
             resolved.push(resolve_type(unresolved, defs, params)?);
         }
     }
-    Ok(sig.span.sp(Signature::explicit(
-        params.iter().map(|param| param.data.clone()).collect(),
-        resolved_before,
-        resolved_after,
-    )))
+    Ok(sig.span.sp(Signature::new(resolved_before, resolved_after)))
 }
 
 pub fn resolve_type(
@@ -191,7 +187,11 @@ pub fn resolve_type(
 ) -> SpResult<Type, ResolutionError> {
     if let UnresolvedType::Ident(ident) = &**ty {
         if let Some(i) = params.iter().position(|param| ident.single_and_eq(&param)) {
-            Ok(Type::Generic(Generic::new(ident.name.clone(), i as u8)))
+            Ok(Type::Generic(Generic::new(
+                ident.name.clone(),
+                i as u8,
+                false,
+            )))
         } else {
             resolve_concrete_type(ty, defs, params)
         }

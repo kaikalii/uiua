@@ -108,7 +108,7 @@ impl Parser {
             } else {
                 return self.expected("type");
             }
-        } else if let Some(sig) = self.sig(params.clone())? {
+        } else if let Some(sig) = self.sig(params)? {
             Some(sig.map(|sig| UnresolvedType::Prim(Primitive::Quotation(sig))))
         } else {
             return Ok(None);
@@ -129,7 +129,7 @@ impl Parser {
     /// Match a type signature
     fn sig(
         &mut self,
-        params: Sp<UnresolvedParams>,
+        params: &Sp<UnresolvedParams>,
     ) -> Result<Option<Sp<UnresolvedSignature>>, ParseError> {
         Ok(if let Some(open_paren) = self.try_mat(TT::OpenParen) {
             let start = open_paren.span.start;
@@ -147,7 +147,7 @@ impl Parser {
             }
             // Match closing paren
             let end = self.mat(')', TT::CloseParen)?.span.end;
-            Some(Span::new(start, end).sp(Signature::explicit(params, before, after)))
+            Some(Span::new(start, end).sp(Signature::new_unresolved(before, after)))
         } else {
             None
         })
@@ -183,7 +183,7 @@ impl Parser {
         // Match type parameters
         let params = self.params()?;
         // Match an optional type signature
-        let sig = self.sig(params)?;
+        let sig = self.sig(&params)?;
         // Match equals sign
         self.mat('=', TT::Equals)?;
         // Match the nodes
@@ -191,7 +191,12 @@ impl Parser {
         // Match the closing semicolon
         self.try_mat(TT::SemiColon);
         let end = self.loc;
-        Ok(Span::new(start, end).sp(UnresolvedWord { name, sig, nodes }))
+        Ok(Span::new(start, end).sp(UnresolvedWord {
+            name,
+            params,
+            sig,
+            nodes,
+        }))
     }
     /// Match an item
     fn item(&mut self) -> Result<UnresolvedItem, ParseError> {

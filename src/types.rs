@@ -33,6 +33,60 @@ impl Type {
         generics.dedup();
         generics
     }
+    fn merge_in(&mut self, new: Type) {
+        match (self, &new) {
+            (Type::Generic(a), Type::Generic(b)) => {
+                a.index = b.index;
+                if !b.infered {
+                    a.infered = false;
+                    a.name = b.name.clone();
+                }
+            }
+            (a, _) => *a = new,
+        }
+    }
+    fn visit<F>(&self, f: &mut F)
+    where
+        F: FnMut(&Type),
+    {
+        f(self);
+        match self {
+            Type::Prim(prim) => match prim {
+                Primitive::List(inner) => inner.visit(f),
+                Primitive::Quotation(sig) => {
+                    for ty in &sig.before {
+                        ty.visit(f)
+                    }
+                    for ty in &sig.after {
+                        ty.visit(f)
+                    }
+                }
+                _ => {}
+            },
+            Type::Generic(_) => {}
+        }
+    }
+    fn mutate<F>(&mut self, f: &mut F)
+    where
+        F: FnMut(&mut Type),
+    {
+        f(self);
+        match self {
+            Type::Prim(prim) => match prim {
+                Primitive::List(inner) => inner.mutate(f),
+                Primitive::Quotation(sig) => {
+                    for ty in &mut sig.before {
+                        ty.mutate(f)
+                    }
+                    for ty in &mut sig.after {
+                        ty.mutate(f)
+                    }
+                }
+                _ => {}
+            },
+            Type::Generic(_) => {}
+        }
+    }
 }
 
 impl TreeHash for Type {
@@ -64,13 +118,15 @@ impl fmt::Display for Type {
 pub struct Generic {
     pub name: String,
     pub index: u8,
+    pub infered: bool,
 }
 
 impl Generic {
-    pub fn new<S: Into<String>>(name: S, index: u8) -> Generic {
+    pub fn new<S: Into<String>>(name: S, index: u8, infered: bool) -> Generic {
         Generic {
             name: name.into(),
             index,
+            infered,
         }
     }
 }
@@ -94,7 +150,7 @@ impl Ord for Generic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Primitive<T = Type, P = Params> {
+pub enum Primitive<T = Type> {
     Unit,
     Bool,
     Nat,
@@ -103,10 +159,10 @@ pub enum Primitive<T = Type, P = Params> {
     Char,
     Text,
     List(Box<T>),
-    Quotation(Signature<T, P>),
+    Quotation(Signature<T>),
 }
 
-pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>, Sp<UnresolvedParams>>;
+pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>>;
 
 impl<T> Primitive<T> {
     pub fn list(inner: T) -> Self {
@@ -142,44 +198,33 @@ impl fmt::Display for Primitive {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Signature<T = Type, P = Params> {
-    pub params: P,
+pub struct Signature<T = Type> {
     pub before: Vec<T>,
     pub after: Vec<T>,
 }
 
-pub type Params = Vec<String>;
 pub type UnresolvedParams = Vec<Sp<String>>;
-pub type UnresolvedSignature = Signature<Sp<UnresolvedType>, Sp<UnresolvedParams>>;
+pub type UnresolvedSignature = Signature<Sp<UnresolvedType>>;
 
-impl<T, P> Signature<T, P> {
-    pub fn explicit(params: P, before: Vec<T>, after: Vec<T>) -> Self {
-        Signature {
-            params,
-            before,
-            after,
-        }
+impl UnresolvedSignature {
+    pub fn new_unresolved(before: Vec<Sp<UnresolvedType>>, after: Vec<Sp<UnresolvedType>>) -> Self {
+        Signature { before, after }
     }
 }
 
 impl Signature {
     pub fn new(before: Vec<Type>, after: Vec<Type>) -> Self {
-        let mut sig = Signature::explicit(Vec::new(), before, after);
+        let mut sig = Signature { before, after };
         let reassign: HashMap<u8, u8> = sig
             .generics()
             .into_iter()
             .enumerate()
             .map(|(i, g)| (g, i as u8))
             .collect();
-        let params = &mut sig.params;
         for ty in sig.before.iter_mut().chain(&mut sig.after) {
-            transform_type(ty, &mut |ty| {
+            ty.mutate(&mut |ty| {
                 if let Type::Generic(g) = ty {
                     g.index = reassign[&g.index];
-                    if params.len() <= g.index as usize {
-                        params.resize(g.index as usize + 1, String::new());
-                    }
-                    params[g.index as usize] = g.name.clone();
                 }
             });
         }
@@ -201,6 +246,21 @@ impl TreeHash for Signature {
 }
 
 impl Signature {
+    pub fn params(&self) -> Vec<Generic> {
+        let mut params: Vec<Generic> = Vec::new();
+        for &state in &[&self.before, &self.after] {
+            for ty in state {
+                ty.visit(&mut |ty| {
+                    if let Type::Generic(g) = ty {
+                        if !params.iter().any(|p| p.index == g.index) {
+                            params.push(g.clone());
+                        }
+                    }
+                });
+            }
+        }
+        params
+    }
     fn generics(&self) -> Vec<u8> {
         let mut generics: Vec<_> = self
             .before
@@ -218,14 +278,14 @@ impl Signature {
             + 1;
         let mut res = other.clone();
         for ty in &mut res.before {
-            transform_type(ty, &mut |ty| {
+            ty.mutate(&mut |ty| {
                 if let Type::Generic(g) = ty {
                     g.index += add_to_b;
                 }
             });
         }
         for ty in &mut res.after {
-            transform_type(ty, &mut |ty| {
+            ty.mutate(&mut |ty| {
                 if let Type::Generic(g) = ty {
                     g.index += add_to_b;
                 }
@@ -237,14 +297,16 @@ impl Signature {
         // println!();
         let mut a = self.clone();
         let mut b = self.exclusive_params(other);
+        // println!("!a: {}", a);
+        // println!("!b: {}", b);
         let mut resolver = TypeResolver::default();
         // Loop over the reversed outputs of a zipped with the reversed inputs of b
         let mut i = 0;
         loop {
             if a.after.len() > i && b.before.len() > i {
                 // println!();
-                // println!("a {}", a);
-                // println!("b {}", b);
+                // println!("a: {}", a);
+                // println!("b: {}", b);
                 let a_len = a.after.len();
                 let b_len = b.before.len();
                 let a_after = &a.after[a_len - 1 - i];
@@ -259,8 +321,8 @@ impl Signature {
                 // println!("{:?}", resolver);
                 resolver.resolve_sig(&mut a);
                 resolver.resolve_sig(&mut b);
-                // println!("a {}", a);
-                // println!("b {}", b);
+                // println!("a: {}", a);
+                // println!("b: {}", b);
                 let a_after = &a.after[a_len - 1 - i];
                 let b_before = &b.before[b_len - 1 - i];
                 if a_after != b_before {
@@ -290,7 +352,7 @@ impl Signature {
             .cloned()
             .collect();
         let sig = Signature::new(before, after);
-        // println!("ab {}", sig);
+        // println!("ab: {}", sig);
         Ok(sig)
     }
     fn minimum_equivalent(&self) -> Self {
@@ -370,9 +432,11 @@ impl TypeResolver {
     }
     fn insert(&mut self, a: Generic, ty: &Type) {
         if let Type::Generic(b) = ty {
+            // The inserted type is generic
             let a_buc = self.0.iter().position(|(buc, _)| buc.contains(&a));
             let b_buc = self.0.iter().position(|(buc, _)| buc.contains(&b));
             if let Some((a, b)) = a_buc.zip(b_buc) {
+                // Both generics already have buckets
                 if a != b {
                     let combined = a.min(b);
                     let mut removed = self.0.remove(a.max(b));
@@ -386,6 +450,7 @@ impl TypeResolver {
             } else if let Some(b) = b_buc {
                 self.0[b].0.insert(a);
             } else {
+                // Neighther generic has a bucket
                 let mut bucket = BTreeSet::new();
                 bucket.insert(a);
                 bucket.insert(b.clone());
@@ -394,9 +459,11 @@ impl TypeResolver {
         } else if let Some((bucket, concrete @ None)) =
             self.0.iter_mut().find(|(buc, _)| buc.contains(&a))
         {
+            // If the bucket already exists, set the type
             bucket.insert(a);
             *concrete = Some(ty.clone());
         } else {
+            // If the bucket does not exist, ecrate it
             let mut bucket = BTreeSet::new();
             bucket.insert(a);
             self.0.push((bucket, Some(ty.clone())));
@@ -410,57 +477,33 @@ impl TypeResolver {
                 if let Some(ty) = ty {
                     ty.clone()
                 } else {
-                    Type::Generic(buc.iter().max().unwrap().clone())
+                    let max = buc.iter().max().unwrap();
+                    let index = max.index;
+                    let (infered, name) = if let Some(g) = buc.iter().find(|g| !g.infered) {
+                        (false, g.name.clone())
+                    } else {
+                        (true, max.name.clone())
+                    };
+                    let selected_generic = Generic::new(name, index, infered);
+                    Type::Generic(selected_generic)
                 }
             })
     }
     fn resolve_ty(&self, ty: &mut Type) {
-        transform_type(ty, &mut |ty| {
+        ty.mutate(&mut |ty| {
             if let Type::Generic(g) = ty {
                 if let Some(new) = self.get(g) {
-                    *ty = new;
+                    ty.merge_in(new);
                 }
             }
         })
     }
 }
 
-fn set_generic(ty: &mut Type, i: u8, new: &Type) {
-    transform_type(ty, &mut |ty| {
-        if let Type::Generic(g) = ty {
-            if i == g.index {
-                *ty = new.clone()
-            }
-        }
-    })
-}
-
-fn transform_type<F>(ty: &mut Type, f: &mut F)
-where
-    F: FnMut(&mut Type),
-{
-    f(ty);
-    match ty {
-        Type::Prim(prim) => match prim {
-            Primitive::List(inner) => transform_type(inner, f),
-            Primitive::Quotation(sig) => {
-                for ty in &mut sig.before {
-                    transform_type(ty, f)
-                }
-                for ty in &mut sig.after {
-                    transform_type(ty, f)
-                }
-            }
-            _ => {}
-        },
-        Type::Generic(_) => {}
-    }
-}
-
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for param in &self.params {
-            write!(f, "{} ", param)?;
+        for param in &self.params() {
+            write!(f, "{} ", param.name)?;
         }
         write!(f, "( ")?;
         for ty in &self.before {

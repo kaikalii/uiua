@@ -30,11 +30,11 @@ static ALL_BUILTIN_DEFS: Lazy<Vec<BuiltinWord>> = Lazy::new(|| {
     BuiltinWord::ALL_SIMPLE
         .iter()
         .copied()
-        // .chain((0..10).flat_map(|bef| {
-        //     (0..10).flat_map(move |aft| {
-        //         once(BuiltinWord::Call(bef, aft)).chain(once(BuiltinWord::If(bef, aft)))
-        //     })
-        // }))
+        .chain((0..10).flat_map(|bef| {
+            (0..10).flat_map(move |aft| {
+                once(BuiltinWord::Call(bef, aft)).chain(once(BuiltinWord::If(bef, aft)))
+            })
+        }))
         .collect()
 });
 
@@ -52,11 +52,11 @@ builtin_words!(
 );
 
 fn generic_list() -> Type {
-    Primitive::list(Type::Generic(Generic::new("T", 0))).into()
+    Primitive::list(Type::Generic(Generic::new("a", 0, true))).into()
 }
 
 fn generic(name: &str, i: u8) -> Type {
-    Type::Generic(Generic::new(name, i))
+    Type::Generic(Generic::new(name, i, true))
 }
 
 fn a() -> Type {
@@ -146,6 +146,7 @@ impl Iterator for DefaultParams {
             Some(Type::Generic(Generic::new(
                 (b'a' + self.i - 1) as char,
                 self.i - 1,
+                true,
             )))
         } else {
             None
