@@ -6,7 +6,7 @@ use std::{
 
 use sha3::*;
 
-use crate::{ast::*, span::*};
+use crate::{ast::*, resolve::ResolutionError, span::*};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -233,7 +233,7 @@ impl Signature {
         }
         res
     }
-    pub fn compose(&self, other: &Self) -> Result<Self, TypeError> {
+    pub fn compose(&self, other: &Self) -> Result<Self, SignatureError> {
         // println!();
         let mut a = self.clone();
         let mut b = self.exclusive_params(other);
@@ -250,9 +250,9 @@ impl Signature {
                 let a_after = &a.after[a_len - 1 - i];
                 let b_before = &b.before[b_len - 1 - i];
                 if a_after != b_before && a_after.generics() == b_before.generics() {
-                    return Err(TypeError::Mismatch {
-                        expected: b_before.clone(),
-                        found: a_after.clone(),
+                    return Err(SignatureError {
+                        input: a.clone(),
+                        output: b.clone(),
                     });
                 }
                 resolver.align(a_after, b_before);
@@ -264,9 +264,9 @@ impl Signature {
                 let a_after = &a.after[a_len - 1 - i];
                 let b_before = &b.before[b_len - 1 - i];
                 if a_after != b_before {
-                    return Err(TypeError::Mismatch {
-                        found: a_after.clone(),
-                        expected: b_before.clone(),
+                    return Err(SignatureError {
+                        input: a.clone(),
+                        output: b.clone(),
                     });
                 }
             } else {
@@ -323,7 +323,10 @@ impl Signature {
         }
         resolver.resolve_sig(&mut a);
         resolver.resolve_sig(&mut b);
-        a.before == b.before && a.after == other.after
+        a.before == b.before && a.after == b.after
+    }
+    pub fn imagine_input_sig(&self) -> Self {
+        Signature::new(Vec::new(), self.before.clone())
     }
 }
 
@@ -498,10 +501,20 @@ fn sig_compose() {
     assert!(a.compose(&b).is_err());
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum TypeError {
-    #[error("Expected {expected} found {found}")]
-    Mismatch { expected: Type, found: Type },
+#[derive(Debug)]
+pub struct SignatureError {
+    input: Signature,
+    output: Signature,
+}
+
+impl SignatureError {
+    pub fn name(self, name: String) -> ResolutionError {
+        ResolutionError::TypeMismatch {
+            ident: Ident::no_module(name),
+            input: self.input,
+            output: self.output,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -115,4 +115,13 @@ where
 
 impl<T> Error for Sp<T> where T: Error {}
 
+impl<'a, T> Sp<&'a T>
+where
+    T: Clone,
+{
+    pub fn cloned(&self) -> Sp<T> {
+        self.span.sp(self.data.clone())
+    }
+}
+
 pub type SpResult<T, E> = Result<T, Sp<E>>;

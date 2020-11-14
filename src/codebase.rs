@@ -1,10 +1,10 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     env,
     error::Error,
     fs,
     io::{self, stdout, Write},
-    iter::repeat,
+    iter::*,
     path::{Path, PathBuf},
     sync::{mpsc, Arc, Mutex},
     thread,
@@ -157,17 +157,24 @@ pub enum CodeBaseError {
     Notify(#[from] notify::Error),
 }
 
+pub type Uses = Arc<Mutex<Vec<String>>>;
+
 #[derive(Debug)]
 pub struct Defs {
+    pub uses: Uses,
     pub words: ItemDefs<Word>,
     pub types: ItemDefs<Type>,
 }
 
 impl Default for Defs {
     fn default() -> Self {
+        let uses = Arc::new(Mutex::new(
+            PRELUDE.iter().copied().map(Into::into).collect(),
+        ));
         let mut defs = Defs {
-            words: Default::default(),
-            types: Default::default(),
+            words: ItemDefs::new(&uses),
+            types: ItemDefs::new(&uses),
+            uses,
         };
         for &word in BuiltinWord::all().iter() {
             defs.words.insert(word.ident(), word.into());
@@ -178,14 +185,16 @@ impl Default for Defs {
 
 #[derive(Debug, Clone)]
 pub struct ItemDefs<T> {
-    idents: HashMap<Ident, Hash>,
+    uses: Uses,
+    hashes: HashMap<Ident, BTreeSet<Hash>>,
     items: HashMap<Hash, (T, Ident)>,
 }
 
-impl<T> Default for ItemDefs<T> {
-    fn default() -> Self {
+impl<T> ItemDefs<T> {
+    fn new(uses: &Uses) -> Self {
         ItemDefs {
-            idents: HashMap::new(),
+            uses: uses.clone(),
+            hashes: HashMap::new(),
             items: HashMap::new(),
         }
     }
@@ -195,33 +204,44 @@ impl<T> ItemDefs<T>
 where
     T: TreeHash,
 {
-    fn maybe_included(&self, ident: &Ident) -> Option<Ident> {
-        if ident.module.is_none() {
-            Some(Ident::base(ident.name.clone()))
-        } else {
-            None
-        }
-    }
-    pub fn hash_by_ident(&self, ident: &Ident) -> Option<&Hash> {
-        self.idents.get(ident).or_else(|| {
-            self.maybe_included(ident)
-                .and_then(|ident| self.idents.get(&ident))
-        })
+    pub fn hashes_by_ident<'a>(&'a self, ident: &'a Ident) -> impl Iterator<Item = &Hash> + 'a {
+        once(ident.clone())
+            .chain(
+                if ident.module.is_some() {
+                    Vec::new().into_iter()
+                } else {
+                    self.uses.lock().unwrap().clone().into_iter()
+                }
+                .map(move |module| Ident::module(&module, &ident.name)),
+            )
+            .filter_map(move |ident| self.hashes.get(&ident))
+            .flatten()
     }
     pub fn ident_by_hash(&self, hash: &Hash) -> Option<&Ident> {
         self.items.get(hash).map(|(_, ident)| ident)
     }
-    pub fn by_ident(&self, ident: &Ident) -> Option<(&Hash, &T)> {
-        self.hash_by_ident(ident)
-            .and_then(|hash| self.by_hash(hash).map(|item| (hash, item)))
+    pub fn by_ident<'a>(&'a self, ident: &'a Ident) -> impl Iterator<Item = (&Hash, &T)> {
+        self.hashes_by_ident(ident)
+            .filter_map(move |hash| self.by_hash(hash).map(|item| (hash, item)))
     }
     pub fn by_hash(&self, hash: &Hash) -> Option<&T> {
         self.items.get(hash).map(|(item, _)| item)
     }
     pub fn insert(&mut self, ident: Ident, item: T) {
         let hash = item.hash_finish();
-        self.idents.insert(ident.clone(), hash);
+        self.hashes.entry(ident.clone()).or_default().insert(hash);
         self.items.insert(hash, (item, ident));
+    }
+}
+
+impl ItemDefs<Word> {
+    pub fn by_ident_matching_sig<'a>(
+        &'a self,
+        ident: &'a Ident,
+        sig: &'a Signature,
+    ) -> impl Iterator<Item = (&Hash, &Word)> + 'a {
+        self.by_ident(ident)
+            .filter(move |(_, word)| sig.compose(&word.sig).is_ok())
     }
 }
 

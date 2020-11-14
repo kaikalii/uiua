@@ -5,6 +5,8 @@ use sha3::*;
 
 use crate::{ast::*, types::*};
 
+pub static PRELUDE: &[&str] = &["base", "list", "math", "quote"];
+
 macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
         #[derive(Debug, Clone, Copy)]
@@ -28,11 +30,11 @@ static ALL_BUILTIN_DEFS: Lazy<Vec<BuiltinWord>> = Lazy::new(|| {
     BuiltinWord::ALL_SIMPLE
         .iter()
         .copied()
-        .chain((0..10).flat_map(|bef| {
-            (0..10).flat_map(move |aft| {
-                once(BuiltinWord::Call(bef, aft)).chain(once(BuiltinWord::If(bef, aft)))
-            })
-        }))
+        // .chain((0..10).flat_map(|bef| {
+        //     (0..10).flat_map(move |aft| {
+        //         once(BuiltinWord::Call(bef, aft)).chain(once(BuiltinWord::If(bef, aft)))
+        //     })
+        // }))
         .collect()
 });
 

@@ -96,6 +96,7 @@ impl Parser {
                 (None, "Nat") => UnresolvedType::Prim(Primitive::Nat),
                 (None, "Int") => UnresolvedType::Prim(Primitive::Int),
                 (None, "Float") => UnresolvedType::Prim(Primitive::Float),
+                (None, "Char") => UnresolvedType::Prim(Primitive::Char),
                 (None, "Text") => UnresolvedType::Prim(Primitive::Text),
                 _ => UnresolvedType::Ident(ident.data),
             }))
