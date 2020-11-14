@@ -43,26 +43,24 @@ where
 #[derive(Debug, Clone)]
 pub enum Item {
     Word(Word),
-    Rule(Rule),
-    Follow(Follow),
 }
 
 #[derive(Debug, Clone)]
 pub struct Word {
     pub sig: Signature,
-    pub kind: BodyKind<BuiltinWord>,
+    pub kind: WordKind,
 }
 
 impl TreeHash for Word {
     fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(&self.kind)) });
         match &self.kind {
-            BodyKind::Uiua(nodes) => {
+            WordKind::Uiua(nodes) => {
                 for node in nodes {
                     node.hash(sha);
                 }
             }
-            BodyKind::Builtin(bi) => bi.hash(sha),
+            WordKind::Builtin(bi) => bi.hash(sha),
         }
     }
 }
@@ -71,65 +69,15 @@ impl From<BuiltinWord> for Word {
     fn from(builtin: BuiltinWord) -> Self {
         Word {
             sig: builtin.sig(),
-            kind: BodyKind::Builtin(builtin),
+            kind: WordKind::Builtin(builtin),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum BodyKind<T> {
+pub enum WordKind {
     Uiua(Vec<Node>),
-    Builtin(T),
-}
-
-#[derive(Debug, Clone)]
-pub struct Rule {
-    pub hash: Hash,
-    pub sig: Signature,
-    pub kind: RuleKind,
-}
-
-impl TreeHash for Rule {
-    fn hash(&self, sha: &mut Sha3_256) {
-        sha.update(&self.hash);
-        self.sig.hash(sha);
-    }
-}
-
-impl From<BuiltinRule> for Rule {
-    fn from(bi: BuiltinRule) -> Self {
-        Rule {
-            hash: bi.ident().hash_finish(),
-            sig: bi.sig(),
-            kind: RuleKind::Builtin,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuleKind {
-    Uiua,
-    Builtin,
-}
-
-#[derive(Debug, Clone)]
-pub struct Follow {
-    pub bound: Bound,
-    pub kind: BodyKind<BuiltinFollow>,
-}
-
-impl TreeHash for Follow {
-    fn hash(&self, sha: &mut Sha3_256) {
-        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(&self.kind)) });
-        match &self.kind {
-            BodyKind::Uiua(nodes) => {
-                for node in nodes {
-                    node.hash(sha);
-                }
-            }
-            BodyKind::Builtin(bi) => bi.hash(sha),
-        }
-    }
+    Builtin(BuiltinWord),
 }
 
 #[derive(Debug, Clone)]
@@ -159,8 +107,6 @@ impl TreeHash for Node {
 #[derive(Debug, Clone)]
 pub enum UnresolvedItem {
     Word(Sp<UnresolvedWord>),
-    Rule(Sp<UnresolvedRule>),
-    Follow(Sp<UnresolvedFollow>),
 }
 
 #[derive(Debug, Clone)]
@@ -169,22 +115,6 @@ pub struct UnresolvedWord {
     pub sig: Option<Sp<UnresolvedSignature>>,
     pub nodes: Vec<Sp<UnresolvedNode>>,
 }
-
-#[derive(Debug, Clone)]
-pub struct UnresolvedRule {
-    pub name: Sp<String>,
-    pub hash: Option<Hash>,
-    pub sig: Sp<UnresolvedSignature>,
-}
-
-#[derive(Debug, Clone)]
-pub struct UnresolvedFollow {
-    pub rule_name: Sp<Ident>,
-    pub params: Sp<UnresolvedFollowParams>,
-    pub nodes: Vec<Sp<UnresolvedNode>>,
-}
-
-pub type UnresolvedFollowParams = Vec<Sp<Ident>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ident {

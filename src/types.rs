@@ -94,7 +94,7 @@ impl Ord for Generic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Primitive<T = Type, P = Params, B = Bounds> {
+pub enum Primitive<T = Type, P = Params> {
     Unit,
     Bool,
     Nat,
@@ -103,11 +103,10 @@ pub enum Primitive<T = Type, P = Params, B = Bounds> {
     Char,
     Text,
     List(Box<T>),
-    Quotation(Signature<T, P, B>),
+    Quotation(Signature<T, P>),
 }
 
-pub type UnresolvedPrimitive =
-    Primitive<Sp<UnresolvedType>, Sp<UnresolvedParams>, Sp<UnresolvedBounds>>;
+pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>, Sp<UnresolvedParams>>;
 
 impl<T> Primitive<T> {
     pub fn list(inner: T) -> Self {
@@ -143,49 +142,20 @@ impl fmt::Display for Primitive {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Bound {
-    pub rule: Hash,
-    pub ident: Ident,
-    pub types: Vec<Type>,
-}
-
-impl fmt::Display for Bound {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{{ ")?;
-        write!(f, "{} ", self.ident)?;
-        for ty in &self.types {
-            write!(f, "{} ", ty)?;
-        }
-        write!(f, "}}")
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnresolvedBound {
-    pub rule_ident: Sp<Ident>,
-    pub types: Vec<Sp<UnresolvedType>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Signature<T = Type, P = Params, B = Bounds> {
+pub struct Signature<T = Type, P = Params> {
     pub params: P,
-    pub bounds: B,
     pub before: Vec<T>,
     pub after: Vec<T>,
 }
 
 pub type Params = Vec<String>;
-pub type Bounds = Vec<Bound>;
 pub type UnresolvedParams = Vec<Sp<String>>;
-pub type UnresolvedBounds = Vec<Sp<UnresolvedBound>>;
-pub type UnresolvedSignature =
-    Signature<Sp<UnresolvedType>, Sp<UnresolvedParams>, Sp<UnresolvedBounds>>;
+pub type UnresolvedSignature = Signature<Sp<UnresolvedType>, Sp<UnresolvedParams>>;
 
-impl<T, P, B> Signature<T, P, B> {
-    pub fn explicit(params: P, bounds: B, before: Vec<T>, after: Vec<T>) -> Self {
+impl<T, P> Signature<T, P> {
+    pub fn explicit(params: P, before: Vec<T>, after: Vec<T>) -> Self {
         Signature {
             params,
-            bounds,
             before,
             after,
         }
@@ -194,7 +164,7 @@ impl<T, P, B> Signature<T, P, B> {
 
 impl Signature {
     pub fn new(before: Vec<Type>, after: Vec<Type>) -> Self {
-        let mut sig = Signature::explicit(Vec::new(), Vec::new(), before, after);
+        let mut sig = Signature::explicit(Vec::new(), before, after);
         let reassign: HashMap<u8, u8> = sig
             .generics()
             .into_iter()

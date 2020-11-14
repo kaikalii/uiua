@@ -90,23 +90,6 @@ impl CodeBase {
                         }
                         Err(e) => Some((unresolved, Some(e))),
                     },
-                    UnresolvedItem::Rule(ur) => match resolve_rule(&ur, &defs) {
-                        Ok(rule) => {
-                            println!("{} {}", ur.name.data, rule.sig);
-                            defs.rules
-                                .insert(Ident::no_module(ur.name.data.clone()), rule);
-                            None
-                        }
-                        Err(e) => Some((unresolved, Some(e))),
-                    },
-                    UnresolvedItem::Follow(uf) => match resolve_follow(&uf, &defs) {
-                        Ok(follow) => {
-                            println!("{} {:?}", uf.rule_name.data, follow.bound);
-                            defs.follows.insert(uf.rule_name.data.clone(), follow);
-                            None
-                        }
-                        Err(e) => Some((unresolved, Some(e))),
-                    },
                 })
                 .collect();
             if unresolved_items.len() == last_len {
@@ -178,8 +161,6 @@ pub enum CodeBaseError {
 pub struct Defs {
     pub words: ItemDefs<Word>,
     pub types: ItemDefs<Type>,
-    pub rules: ItemDefs<Rule>,
-    pub follows: ItemDefs<Follow>,
 }
 
 impl Default for Defs {
@@ -187,14 +168,9 @@ impl Default for Defs {
         let mut defs = Defs {
             words: Default::default(),
             types: Default::default(),
-            rules: Default::default(),
-            follows: Default::default(),
         };
         for &word in BuiltinWord::all().iter() {
             defs.words.insert(word.ident(), word.into());
-        }
-        for &rule in BuiltinRule::ALL.iter() {
-            defs.rules.insert(rule.ident(), rule.into());
         }
         defs
     }

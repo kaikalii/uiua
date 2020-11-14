@@ -26,8 +26,7 @@ pub enum TT {
     Tilde,
     Period,
     Equals,
-    Rule,
-    Follow,
+    Data,
 }
 
 impl TT {
@@ -80,8 +79,7 @@ impl fmt::Display for TT {
             TT::Tilde => "~".fmt(f),
             TT::Period => ".".fmt(f),
             TT::Equals => "=".fmt(f),
-            TT::Rule => "rule".fmt(f),
-            TT::Follow => "follow".fmt(f),
+            TT::Data => "data".fmt(f),
         }
     }
 }
@@ -376,8 +374,7 @@ fn ident_str_as_tt(s: String) -> TT {
     match s.as_str() {
         "true" => TT::Bool(true),
         "false" => TT::Bool(false),
-        "rule" => TT::Rule,
-        "follow" => TT::Follow,
+        "data" => TT::Data,
         _ => TT::Ident(s),
     }
 }

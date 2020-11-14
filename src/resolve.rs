@@ -4,7 +4,7 @@ use crate::{ast::*, codebase::*, span::*, types::*};
 
 pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
     let given_sig = if let Some(sig) = &word.sig {
-        Some(resolve_sig(sig, defs, &sig.params, &sig.bounds)?)
+        Some(resolve_sig(sig, defs, &sig.params)?)
     } else {
         None
     };
@@ -13,37 +13,8 @@ pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, Re
     let sig = seq_sig(&nodes, defs, given_sig, &word.name)?;
     Ok(Word {
         sig: sig.data,
-        kind: BodyKind::Uiua(nodes.into_iter().map(|n| n.data).collect()),
+        kind: WordKind::Uiua(nodes.into_iter().map(|n| n.data).collect()),
     })
-}
-
-pub fn resolve_rule(rule: &Sp<UnresolvedRule>, defs: &Defs) -> SpResult<Rule, ResolutionError> {
-    let hash = rule.hash.unwrap_or_else(|| rule.name.hash_finish());
-    let sig = resolve_sig(&rule.sig, defs, &rule.sig.params, &rule.sig.bounds)?.data;
-    Ok(Rule {
-        hash,
-        sig,
-        kind: RuleKind::Uiua,
-    })
-}
-
-pub fn resolve_follow(
-    follow: &Sp<UnresolvedFollow>,
-    defs: &Defs,
-) -> SpResult<Follow, ResolutionError> {
-    let ident = &follow.rule_name.data.clone();
-    let (hash, rule) = defs.rules.by_ident(&ident).ok_or_else(|| {
-        follow
-            .rule_name
-            .span
-            .sp(ResolutionError::UnknownRule(follow.rule_name.data.clone()))
-    })?;
-    let nodes = resolve_sequence(
-        &follow.nodes,
-        defs,
-        &follow.rule_name.clone().map(|ident| ident.name),
-        Some(&rule.sig),
-    )?;
 }
 
 pub fn resolve_sequence(
@@ -141,7 +112,6 @@ pub fn resolve_sig(
     sig: &Sp<UnresolvedSignature>,
     defs: &Defs,
     params: &Sp<UnresolvedParams>,
-    bounds: &Sp<UnresolvedBounds>,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     let mut resolved_before = Vec::new();
     let mut resolved_after = Vec::new();
@@ -150,34 +120,11 @@ pub fn resolve_sig(
         (&sig.after, &mut resolved_after),
     ] {
         for unresolved in *unresolved {
-            resolved.push(resolve_type(unresolved, defs, params, bounds)?);
+            resolved.push(resolve_type(unresolved, defs, params)?);
         }
-    }
-    let mut new_params = Vec::new();
-    for param in params.iter() {
-        new_params.push(param.data.clone());
-    }
-    let mut new_bounds = Vec::new();
-    for bound in bounds.iter() {
-        let hash = *defs.rules.hash_by_ident(&bound.rule_ident).ok_or_else(|| {
-            bound
-                .rule_ident
-                .span
-                .sp(ResolutionError::UnknownRule(bound.rule_ident.data.clone()))
-        })?;
-        let mut types = Vec::new();
-        for unresolved in &bound.types {
-            types.push(resolve_type(unresolved, defs, params, bounds)?)
-        }
-        new_bounds.push(Bound {
-            rule: hash,
-            ident: bound.rule_ident.data.clone(),
-            types,
-        })
     }
     Ok(sig.span.sp(Signature::explicit(
-        new_params,
-        new_bounds,
+        params.iter().map(|param| param.data.clone()).collect(),
         resolved_before,
         resolved_after,
     )))
@@ -187,16 +134,15 @@ pub fn resolve_type(
     ty: &Sp<UnresolvedType>,
     defs: &Defs,
     params: &Sp<UnresolvedParams>,
-    bounds: &Sp<UnresolvedBounds>,
 ) -> SpResult<Type, ResolutionError> {
     if let UnresolvedType::Ident(ident) = &**ty {
         if let Some(i) = params.iter().position(|param| ident.single_and_eq(&param)) {
             Ok(Type::Generic(Generic::new(ident.name.clone(), i as u8)))
         } else {
-            resolve_concrete_type(ty, defs, params, bounds)
+            resolve_concrete_type(ty, defs, params)
         }
     } else {
-        resolve_concrete_type(ty, defs, params, bounds)
+        resolve_concrete_type(ty, defs, params)
     }
 }
 
@@ -204,12 +150,9 @@ fn resolve_concrete_type(
     ty: &Sp<UnresolvedType>,
     defs: &Defs,
     params: &Sp<UnresolvedParams>,
-    bounds: &Sp<UnresolvedBounds>,
 ) -> SpResult<Type, ResolutionError> {
     match &ty.data {
-        UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(
-            prim, defs, ty.span, params, bounds,
-        )?)),
+        UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
         UnresolvedType::Ident(name) => {
             if let Some((_, ty)) = defs.types.by_ident(name) {
                 Ok(ty.clone())
@@ -225,7 +168,6 @@ pub fn resolve_prim(
     defs: &Defs,
     span: Span,
     params: &Sp<UnresolvedParams>,
-    bounds: &Sp<UnresolvedBounds>,
 ) -> SpResult<Primitive, ResolutionError> {
     Ok(match prim {
         Primitive::Unit => Primitive::Unit,
@@ -235,9 +177,9 @@ pub fn resolve_prim(
         Primitive::Float => Primitive::Float,
         Primitive::Char => Primitive::Char,
         Primitive::Text => Primitive::Text,
-        Primitive::List(ty) => Primitive::List(Box::new(resolve_type(ty, defs, params, bounds)?)),
+        Primitive::List(ty) => Primitive::List(Box::new(resolve_type(ty, defs, params)?)),
         Primitive::Quotation(sig) => {
-            Primitive::Quotation(resolve_sig(&span.sp(sig.clone()), defs, params, bounds)?.data)
+            Primitive::Quotation(resolve_sig(&span.sp(sig.clone()), defs, params)?.data)
         }
     })
 }
@@ -339,8 +281,6 @@ pub enum ResolutionError {
     UnknownWord(Ident),
     #[error("Unknown type \"{0}\"")]
     UnknownType(Ident),
-    #[error("Unknown rule \"{0}\"")]
-    UnknownRule(Ident),
     #[error("Rescursive definition {0:?} must have an explicit type signature")]
     RecursiveNoSignature(Ident),
     #[error(

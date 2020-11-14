@@ -131,55 +131,6 @@ impl TreeHash for BuiltinWord {
     }
 }
 
-macro_rules! builtin_rule {
-    ($($(#[$doc:meta])? $name:ident,)*) => {
-        #[derive(Debug, Clone, Copy)]
-        pub enum BuiltinRule {
-            $(
-                $(#[$doc])*
-                $name,
-            )*
-        }
-        impl BuiltinRule {
-            pub const ALL: &'static [BuiltinRule] = &[$(BuiltinRule::$name),*];
-        }
-    };
-}
-
-builtin_rule!(
-    /// Add two values
-    Add,
-);
-
-impl BuiltinRule {
-    pub fn sig(&self) -> Signature {
-        let (before, after) = match self {
-            BuiltinRule::Add => (vec![a(); 2], vec![a()]),
-        };
-        Signature::new(before, after)
-    }
-    pub fn ident(&self) -> Ident {
-        match self {
-            BuiltinRule::Add => Ident::module("math", "+"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct BuiltinFollow {
-    pub rule: BuiltinRule,
-    pub types: Vec<Type>,
-}
-
-impl TreeHash for BuiltinFollow {
-    fn hash(&self, sha: &mut Sha3_256) {
-        sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(&self.rule)) });
-        for ty in &self.types {
-            ty.hash(sha);
-        }
-    }
-}
-
 #[derive(Default)]
 struct DefaultParams {
     i: u8,
