@@ -4,7 +4,7 @@ use sha3::*;
 
 use crate::{ast::*, types::*};
 
-pub static PRELUDE: &[&str] = &["base", "list", "math", "quote"];
+pub static PRELUDE: &[&str] = &["stack", "list", "math", "quote"];
 
 macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
@@ -95,11 +95,11 @@ impl BuiltinWord {
     }
     pub fn ident(&self) -> Ident {
         match self {
-            BuiltinWord::Dup => Ident::base("dup"),
+            BuiltinWord::Dup => Ident::module("stack", "dup"),
             BuiltinWord::List => Ident::module("list", "list"),
             BuiltinWord::App => Ident::module("list", "|<"),
-            BuiltinWord::Swap => Ident::base("swap"),
-            BuiltinWord::Pop => Ident::base("pop"),
+            BuiltinWord::Swap => Ident::module("stack", "swap"),
+            BuiltinWord::Pop => Ident::module("stack", "pop"),
             BuiltinWord::Call(before, after) => {
                 Ident::module("quote".into(), format!("!{}--{}", before, after))
             }

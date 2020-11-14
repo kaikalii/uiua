@@ -137,9 +137,6 @@ impl Ident {
             name: name.into(),
         }
     }
-    pub fn base<S: Into<String>>(name: S) -> Self {
-        Ident::new(Some("base".into()), name.into())
-    }
     pub fn no_module<S: Into<String>>(name: S) -> Self {
         Ident::new(None, name)
     }
