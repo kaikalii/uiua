@@ -47,7 +47,7 @@ impl CodeBase {
                             match cb.handle_file_change(&path) {
                                 Ok(comp) => {
                                     println!();
-                                    comp.print_errors();
+                                    comp.print(&cb.defs.lock().unwrap());
                                 }
                                 Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
                             }
@@ -83,7 +83,6 @@ impl CodeBase {
                 .filter_map(|(unresolved, _)| match &unresolved {
                     UnresolvedItem::Word(uw) => match resolve_word(&uw, &mut defs) {
                         Ok(word) => {
-                            println!("{} {}", uw.name.data, word.sig);
                             defs.words
                                 .insert(Ident::no_module(uw.name.data.clone()), word);
                             None
@@ -184,10 +183,16 @@ impl Default for Defs {
 }
 
 #[derive(Debug, Clone)]
+pub struct ItemEntry<T> {
+    pub item: T,
+    pub names: BTreeSet<Ident>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ItemDefs<T> {
     uses: Uses,
     hashes: HashMap<Ident, BTreeSet<Hash>>,
-    items: HashMap<Hash, (T, Ident)>,
+    items: HashMap<Hash, ItemEntry<T>>,
 }
 
 impl<T> ItemDefs<T> {
@@ -202,9 +207,9 @@ impl<T> ItemDefs<T> {
 
 impl<T> ItemDefs<T>
 where
-    T: TreeHash,
+    T: TreeHash + Clone,
 {
-    pub fn hashes_by_ident<'a>(&'a self, ident: &'a Ident) -> impl Iterator<Item = &Hash> + 'a {
+    pub fn hashes_by_ident<'a>(&'a self, ident: &'a Ident) -> impl Iterator<Item = Hash> + 'a {
         once(ident.clone())
             .chain(
                 if ident.module.is_some() {
@@ -216,21 +221,29 @@ where
             )
             .filter_map(move |ident| self.hashes.get(&ident))
             .flatten()
+            .cloned()
     }
-    pub fn ident_by_hash(&self, hash: &Hash) -> Option<&Ident> {
-        self.items.get(hash).map(|(_, ident)| ident)
+    pub fn idents_by_hash(&self, hash: &Hash) -> Option<&BTreeSet<Ident>> {
+        self.items.get(hash).map(|entry| &entry.names)
     }
-    pub fn by_ident<'a>(&'a self, ident: &'a Ident) -> impl Iterator<Item = (&Hash, &T)> {
+    pub fn by_ident<'a>(&'a self, ident: &'a Ident) -> impl Iterator<Item = (Hash, T)> + 'a {
         self.hashes_by_ident(ident)
-            .filter_map(move |hash| self.by_hash(hash).map(|item| (hash, item)))
+            .filter_map(move |hash| self.by_hash(&hash).map(|item| (hash, item)))
     }
-    pub fn by_hash(&self, hash: &Hash) -> Option<&T> {
-        self.items.get(hash).map(|(item, _)| item)
+    pub fn by_hash(&self, hash: &Hash) -> Option<T> {
+        self.items.get(hash).map(|entry| entry.item.clone())
     }
     pub fn insert(&mut self, ident: Ident, item: T) -> Hash {
         let hash = item.hash_finish();
         self.hashes.entry(ident.clone()).or_default().insert(hash);
-        self.items.insert(hash, (item, ident));
+        self.items
+            .entry(hash)
+            .or_insert_with(|| ItemEntry {
+                item,
+                names: BTreeSet::new(),
+            })
+            .names
+            .insert(ident);
         hash
     }
 }
@@ -240,7 +253,7 @@ impl ItemDefs<Word> {
         &'a self,
         ident: &'a Ident,
         sig: &'a Signature,
-    ) -> impl Iterator<Item = (&Hash, &Word)> + 'a {
+    ) -> impl Iterator<Item = (Hash, Word)> + 'a {
         self.by_ident(ident)
             .filter(move |(_, word)| sig.compose(&word.sig).is_ok())
     }
@@ -261,6 +274,31 @@ struct Compilation {
 }
 
 impl Compilation {
+    fn print(&self, defs: &Defs) {
+        println!();
+        if self.errors.is_empty() {
+            for entry in defs.words.items.values() {
+                if entry.item.appears_in_codebase() {
+                    println!(
+                        "{} {} {} and ready to be added",
+                        entry
+                            .names
+                            .iter()
+                            .next()
+                            .unwrap()
+                            .to_string()
+                            .bright_white()
+                            .bold(),
+                        entry.item.sig,
+                        "OK".bright_green()
+                    );
+                }
+            }
+        } else {
+            self.print_errors();
+        }
+        println!();
+    }
     fn print_errors(&self) {
         for error in &self.errors {
             let start = error.span.start;

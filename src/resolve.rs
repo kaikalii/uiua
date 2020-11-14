@@ -59,9 +59,9 @@ pub fn resolve_sequence(
                         defs.words
                             .by_ident_matching_sig(ident, &sig)
                             .next()
-                            .map(|(hash, _)| *hash)
+                            .map(|(hash, _)| hash)
                     } else {
-                        defs.words.by_ident(ident).next().map(|(hash, _)| *hash)
+                        defs.words.by_ident(ident).next().map(|(hash, _)| hash)
                     };
                     let matching_idents = defs.words.by_ident(ident).count();
                     let hash = if let Some(hash) = hash {
@@ -212,7 +212,7 @@ fn resolve_concrete_type(
         UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
         UnresolvedType::Ident(name) => {
             if let Some((_, ty)) = defs.types.by_ident(name).next() {
-                Ok(ty.clone())
+                Ok(ty)
             } else {
                 Err(ty.span.sp(ResolutionError::UnknownType(name.clone())))
             }

@@ -10,6 +10,8 @@ pub enum ParseErrorKind {
     Expected(String),
     #[error("Expected {expected}, but found '{found}'")]
     ExpectedFound { expected: String, found: TT },
+    #[error("Expected signature because of type parameters")]
+    ExpectedSignature,
 }
 
 impl ParseErrorKind {
@@ -116,10 +118,15 @@ impl Parser {
     }
     /// Match type parameter declaration
     fn params(&mut self) -> Result<Sp<UnresolvedParams>, ParseError> {
-        let start = self.loc;
+        let mut start = self.loc;
         let mut end = start;
         // Match type params names
         let mut names = Vec::new();
+        if let Some(name) = self.try_mat(TT::ident) {
+            start = name.span.start;
+            end = name.span.end;
+            names.push(name);
+        }
         while let Some(name) = self.try_mat(TT::ident) {
             end = name.span.end;
             names.push(name);
@@ -184,6 +191,9 @@ impl Parser {
         let params = self.params()?;
         // Match an optional type signature
         let sig = self.sig(&params)?;
+        if sig.is_none() && !params.is_empty() {
+            return Err(ParseErrorKind::ExpectedSignature.span(params.span));
+        }
         // Match equals sign
         self.mat('=', TT::Equals)?;
         // Match the nodes
