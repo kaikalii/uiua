@@ -36,62 +36,14 @@ pub fn resolve_sequence(
                         return Err(node.span.sp(ResolutionError::IfAtStart));
                     } else {
                         let sig = seq_sig(&resolved_nodes, defs, None, name)?;
-                        if let Some(last) = sig.after.last() {
-                            if let Type::Prim(Primitive::Quotation(sig)) = last {
-                                resolved_nodes.push(
-                                    node.span.sp(Node::Ident(
-                                        *defs
-                                            .words
-                                            .by_ident(&Ident::base(format!(
-                                                "?{}--{}",
-                                                sig.before.len(),
-                                                sig.after.len()
-                                            )))
-                                            .unwrap()
-                                            .0,
-                                    )),
-                                );
-                            } else {
-                                return Err(node.span.sp(ResolutionError::ExpectedQuotation {
-                                    found: last.clone(),
-                                }));
-                            }
-                        } else {
-                            return Err(node.span.sp(ResolutionError::ExpectedQuotation {
-                                found: Primitive::Unit.into(),
-                            }));
-                        }
+                        resolved_nodes.push(resolve_magic(defs, '?', node.span, &sig)?);
                     }
                 } else if ident.single_and_eq("!") {
                     if i == 0 {
                         return Err(node.span.sp(ResolutionError::CallAtStart));
                     } else {
                         let sig = seq_sig(&resolved_nodes, defs, None, name)?;
-                        if let Some(last) = sig.after.last() {
-                            if let Type::Prim(Primitive::Quotation(sig)) = last {
-                                resolved_nodes.push(
-                                    node.span.sp(Node::Ident(
-                                        *defs
-                                            .words
-                                            .by_ident(&Ident::base(format!(
-                                                "!{}--{}",
-                                                sig.before.len(),
-                                                sig.after.len()
-                                            )))
-                                            .unwrap()
-                                            .0,
-                                    )),
-                                );
-                            } else {
-                                return Err(node.span.sp(ResolutionError::ExpectedQuotation {
-                                    found: last.clone(),
-                                }));
-                            }
-                        } else {
-                            return Err(node.span.sp(ResolutionError::ExpectedQuotation {
-                                found: Primitive::Unit.into(),
-                            }));
-                        }
+                        resolved_nodes.push(resolve_magic(defs, '!', node.span, &sig)?);
                     }
                 } else {
                     return Err(node.span.sp(ResolutionError::UnknownWord(ident.clone())));
@@ -106,6 +58,38 @@ pub fn resolve_sequence(
         }
     }
     Ok(resolved_nodes)
+}
+
+fn resolve_magic(
+    defs: &Defs,
+    magic_char: char,
+    span: Span,
+    sig: &Sp<Signature>,
+) -> SpResult<Sp<Node>, ResolutionError> {
+    if let Some(last) = sig.after.last() {
+        if let Type::Prim(Primitive::Quotation(sig)) = last {
+            Ok(span.sp(Node::Ident(
+                *defs
+                    .words
+                    .by_ident(&Ident::base(format!(
+                        "{}{}--{}",
+                        magic_char,
+                        sig.before.len(),
+                        sig.after.len()
+                    )))
+                    .unwrap()
+                    .0,
+            )))
+        } else {
+            Err(span.sp(ResolutionError::ExpectedQuotation {
+                found: last.clone(),
+            }))
+        }
+    } else {
+        Err(span.sp(ResolutionError::ExpectedQuotation {
+            found: Primitive::Unit.into(),
+        }))
+    }
 }
 
 pub fn resolve_sig(
