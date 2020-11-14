@@ -5,7 +5,11 @@ use crate::{ast::*, codebase::*, span::*, types::*};
 pub fn resolve_rule(rule: &Sp<UnresolvedRule>, defs: &Defs) -> SpResult<Rule, ResolutionError> {
     let hash = rule.hash.unwrap_or_else(|| rule.name.hash_finish());
     let sig = resolve_sig(&rule.sig, defs, &rule.sig.bounds)?.data;
-    Ok(Rule { hash, sig })
+    Ok(Rule {
+        hash,
+        sig,
+        kind: RuleKind::Uiua,
+    })
 }
 
 pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {

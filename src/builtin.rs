@@ -1,10 +1,10 @@
-use std::{borrow::Cow, iter::once};
+use std::iter::once;
 
 use once_cell::sync::Lazy;
 
-use crate::types::*;
+use crate::{ast::Ident, types::*};
 
-macro_rules! builtin {
+macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
         #[derive(Debug, Clone, Copy)]
         pub enum BuiltinWord {
@@ -35,7 +35,7 @@ static ALL_BUILTIN_DEFS: Lazy<Vec<BuiltinWord>> = Lazy::new(|| {
         .collect()
 });
 
-builtin!(
+builtin_words!(
     /// Duplicate
     Dup,
     /// Make a list
@@ -44,8 +44,6 @@ builtin!(
     App,
     /// Swap the top 2 items
     Swap,
-    /// Add 2 items
-    Add,
     /// Remove the top item
     Pop,
 );
@@ -76,7 +74,6 @@ impl BuiltinWord {
             BuiltinWord::List => (vec![], vec![generic_list()]),
             BuiltinWord::App => (vec![generic_list(), a()], vec![generic_list()]),
             BuiltinWord::Swap => (vec![a(), b()], vec![b(), a()]),
-            BuiltinWord::Add => (vec![a(); 2], vec![a()]),
             BuiltinWord::Pop => (vec![a()], vec![]),
             BuiltinWord::Call(before, after) => {
                 let mut params = DefaultParams::default();
@@ -109,18 +106,54 @@ impl BuiltinWord {
         };
         Signature::new(before, after)
     }
-    pub fn name(&self) -> Cow<'static, str> {
+    pub fn ident(&self) -> Ident {
         match self {
-            BuiltinWord::Dup => "dup",
-            BuiltinWord::List => "list",
-            BuiltinWord::App => "|<",
-            BuiltinWord::Swap => "swap",
-            BuiltinWord::Add => "+",
-            BuiltinWord::Pop => "pop",
-            BuiltinWord::Call(before, after) => return format!("!{}--{}", before, after).into(),
-            BuiltinWord::If(before, after) => return format!("?{}--{}", before, after).into(),
+            BuiltinWord::Dup => Ident::base("dup"),
+            BuiltinWord::List => Ident::module("list", "list"),
+            BuiltinWord::App => Ident::module("list", "|<"),
+            BuiltinWord::Swap => Ident::base("swap"),
+            BuiltinWord::Pop => Ident::base("pop"),
+            BuiltinWord::Call(before, after) => {
+                Ident::module("quote".into(), format!("!{}--{}", before, after))
+            }
+            BuiltinWord::If(before, after) => {
+                Ident::module("quote".into(), format!("?{}--{}", before, after))
+            }
         }
-        .into()
+    }
+}
+
+macro_rules! builtin_rule {
+    ($($(#[$doc:meta])? $name:ident,)*) => {
+        #[derive(Debug, Clone, Copy)]
+        pub enum BuiltinRule {
+            $(
+                $(#[$doc])*
+                $name,
+            )*
+        }
+        impl BuiltinRule {
+            pub const ALL: &'static [BuiltinRule] = &[$(BuiltinRule::$name),*];
+        }
+    };
+}
+
+builtin_rule!(
+    /// Add two values
+    Add,
+);
+
+impl BuiltinRule {
+    pub fn sig(&self) -> Signature {
+        let (before, after) = match self {
+            BuiltinRule::Add => (vec![a(); 2], vec![a()]),
+        };
+        Signature::new(before, after)
+    }
+    pub fn ident(&self) -> Ident {
+        match self {
+            BuiltinRule::Add => Ident::module("math", "+"),
+        }
     }
 }
 

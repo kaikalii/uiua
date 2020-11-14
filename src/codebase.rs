@@ -180,9 +180,11 @@ impl Default for Defs {
             rules: Default::default(),
             types: Default::default(),
         };
-        for &bi in BuiltinWord::all().iter() {
-            defs.words
-                .insert(Ident::new(Some("base".into()), bi.name().into()), bi.into());
+        for &word in BuiltinWord::all().iter() {
+            defs.words.insert(word.ident(), word.into());
+        }
+        for &rule in BuiltinRule::ALL.iter() {
+            defs.rules.insert(rule.ident(), rule.into());
         }
         defs
     }

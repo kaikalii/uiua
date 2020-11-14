@@ -2,7 +2,7 @@ use std::{fmt, mem};
 
 use sha3::*;
 
-use crate::{builtin::BuiltinWord, span::*, types::*};
+use crate::{builtin::*, span::*, types::*};
 
 type HashInner =
     digest::generic_array::GenericArray<u8, digest::generic_array::typenum::consts::U32>;
@@ -88,6 +88,7 @@ pub enum WordKind {
 pub struct Rule {
     pub hash: Hash,
     pub sig: Signature,
+    pub kind: RuleKind,
 }
 
 impl TreeHash for Rule {
@@ -97,15 +98,20 @@ impl TreeHash for Rule {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct TraitItem {
-    pub parent: Hash,
-    pub kind: TraitItemKind,
+impl From<BuiltinRule> for Rule {
+    fn from(bi: BuiltinRule) -> Self {
+        Rule {
+            hash: bi.ident().hash_finish(),
+            sig: bi.sig(),
+            kind: RuleKind::Builtin,
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum TraitItemKind {
-    SigOnly { i: u8, sig: Signature },
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleKind {
+    Uiua,
+    Builtin,
 }
 
 #[derive(Debug, Clone)]
@@ -164,17 +170,33 @@ pub struct Ident {
 }
 
 impl Ident {
-    pub fn new(module: Option<String>, name: String) -> Self {
-        Ident { module, name }
+    pub fn new<S: Into<String>>(module: Option<S>, name: S) -> Self {
+        Ident {
+            module: module.map(Into::into),
+            name: name.into(),
+        }
     }
-    pub fn base(name: String) -> Self {
-        Ident::new(Some("base".into()), name)
+    pub fn base<S: Into<String>>(name: S) -> Self {
+        Ident::new(Some("base".into()), name.into())
     }
-    pub fn no_module(name: String) -> Self {
+    pub fn no_module<S: Into<String>>(name: S) -> Self {
         Ident::new(None, name)
+    }
+    pub fn module<S: Into<String>>(module: S, name: S) -> Self {
+        Ident::new(Some(module), name)
     }
     pub fn single_and_eq(&self, s: &str) -> bool {
         self.module.is_none() && self.name == s
+    }
+}
+
+impl TreeHash for Ident {
+    fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(&[self.module.is_some() as u8]);
+        if let Some(module) = &self.module {
+            sha.update(module);
+        }
+        sha.update(&self.name);
     }
 }
 
