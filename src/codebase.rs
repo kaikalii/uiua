@@ -19,6 +19,7 @@ use crate::{ast::*, builtin::*, parse::*, resolve::*, span::*, types::*};
 #[derive(Clone)]
 pub struct CodeBase {
     top_dir: Arc<PathBuf>,
+    path: Arc<Mutex<Vec<String>>>,
     pub defs: Arc<Mutex<Defs>>,
 }
 
@@ -30,6 +31,7 @@ impl CodeBase {
         watcher.watch(env::current_dir()?, RecursiveMode::Recursive)?;
         let cb = CodeBase {
             top_dir: Arc::new(dir.as_ref().to_path_buf()),
+            path: Default::default(),
             defs: Default::default(),
         };
         let cb_clone = cb.clone();
@@ -49,7 +51,7 @@ impl CodeBase {
                                 }
                                 Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
                             }
-                            cb.print_prompt();
+                            cb.print_path_prompt();
                         }
                     }
                 }
@@ -101,9 +103,36 @@ impl CodeBase {
         );
         Ok(comp)
     }
-    pub fn print_prompt(&self) {
+    pub fn dir(&self) -> PathBuf {
+        self.path
+            .lock()
+            .unwrap()
+            .iter()
+            .fold((*self.top_dir).clone(), |acc, path| acc.join(path))
+    }
+    pub fn print_path_prompt(&self) {
+        print!(".");
+        for (i, path) in self.path.lock().unwrap().iter().enumerate() {
+            print!("{}{}", if i == 0 { "" } else { "." }, path);
+        }
         print!("{} ", ">".bright_yellow());
         let _ = stdout().flush();
+    }
+    pub fn cd(&self, rel_path: &str) -> Result<(), CodeBaseError> {
+        let mut path = self.path.lock().unwrap();
+        if rel_path.starts_with('.') && !rel_path.starts_with("..") {
+            path.clear();
+        }
+        for name in rel_path.split('/').filter(|s| !s.is_empty()) {
+            match name {
+                "." => {}
+                ".." => {
+                    path.pop();
+                }
+                name => path.push(name.into()),
+            }
+        }
+        Ok(())
     }
 }
 
