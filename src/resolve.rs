@@ -141,12 +141,10 @@ fn resolve_magic(
         if let Type::Prim(Primitive::Quotation(sig)) = last {
             Ok(span.sp(*defs
                 .words
-                .by_ident(&Ident::base(format!(
-                    "{}{}--{}",
-                    magic_char,
-                    sig.before.len(),
-                    sig.after.len()
-                )))
+                .by_ident(&Ident::module(
+                    "quote".into(),
+                    format!("{}{}--{}", magic_char, sig.before.len(), sig.after.len()),
+                ))
                 .next()
                 .unwrap()
                 .0))
