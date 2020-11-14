@@ -26,6 +26,8 @@ pub enum TT {
     Tilde,
     Period,
     Equals,
+    Rule,
+    Follow,
 }
 
 impl TT {
@@ -78,6 +80,8 @@ impl fmt::Display for TT {
             TT::Tilde => "~".fmt(f),
             TT::Period => ".".fmt(f),
             TT::Equals => "=".fmt(f),
+            TT::Rule => "rule".fmt(f),
+            TT::Follow => "follow".fmt(f),
         }
     }
 }
@@ -161,6 +165,7 @@ where
                     self.loc.col = 0;
                 }
                 Ok('\r') => {}
+                Ok('\t') => self.loc.col += 4,
                 Ok(_) => self.loc.col += 1,
                 Err(_) => {}
             }
@@ -303,7 +308,7 @@ where
                     if ident_char(c) {
                         s.push(c);
                     } else {
-                        self.push_tt(ident_str_as_tt(s));
+                        self.push_tt_drop_col(ident_str_as_tt(s));
                         self.handle_char(Ok(c))?;
                         return Ok(());
                     }
@@ -315,8 +320,15 @@ where
         self.push_tt(tt);
         Ok(())
     }
+    fn push_tt_drop_col(&mut self, tt: TT) {
+        let mut end = self.loc;
+        end.col = end.col.saturating_sub(1);
+        self.tokens.push(Token {
+            tt,
+            span: Span::new(self.start, end),
+        })
+    }
     fn push_tt(&mut self, tt: TT) {
-        println!("{} - {}", self.start, self.loc);
         assert!(self.start <= self.loc);
         self.tokens.push(Token {
             tt,
@@ -364,6 +376,8 @@ fn ident_str_as_tt(s: String) -> TT {
     match s.as_str() {
         "true" => TT::Bool(true),
         "false" => TT::Bool(false),
+        "rule" => TT::Rule,
+        "follow" => TT::Follow,
         _ => TT::Ident(s),
     }
 }

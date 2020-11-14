@@ -106,7 +106,7 @@ pub enum Primitive<T = Type, B = TypeParams> {
     Quotation(Signature<T, B>),
 }
 
-pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>, Option<UnresolvedTypeParams>>;
+pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>, UnresolvedTypeParams>;
 
 impl<T> Primitive<T> {
     pub fn list(inner: T) -> Self {
@@ -119,25 +119,13 @@ impl TreeHash for Primitive {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
             Primitive::List(inner) => inner.hash(sha),
-            Primitive::Quotation(sig) => {
-                sha.update(sig.before.len().to_le_bytes());
-                sha.update(sig.after.len().to_le_bytes());
-                for ty in &sig.before {
-                    ty.hash(sha);
-                }
-                for ty in &sig.after {
-                    ty.hash(sha);
-                }
-            }
+            Primitive::Quotation(sig) => sig.hash(sha),
             _ => {}
         }
     }
 }
 
-impl<T> fmt::Display for Primitive<T>
-where
-    T: fmt::Display,
-{
+impl fmt::Display for Primitive {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Primitive::Unit => write!(f, "()"),
@@ -154,7 +142,15 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeBound {}
+pub struct TypeBound {
+    pub name: String,
+}
+
+impl fmt::Display for TypeBound {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signature<T = Type, B = TypeParams> {
@@ -165,7 +161,7 @@ pub struct Signature<T = Type, B = TypeParams> {
 
 pub type TypeParams = Vec<TypeBound>;
 pub type UnresolvedTypeParams = Sp<Vec<Sp<String>>>;
-pub type UnresolvedSignature = Sp<Signature<Sp<UnresolvedType>, Option<UnresolvedTypeParams>>>;
+pub type UnresolvedSignature = Sp<Signature<Sp<UnresolvedType>, UnresolvedTypeParams>>;
 
 impl<T, B> Signature<T, B> {
     pub fn with_bounds(bounds: B, before: Vec<T>, after: Vec<T>) -> Self {
@@ -186,18 +182,39 @@ impl Signature {
             .enumerate()
             .map(|(i, g)| (g, i as u8))
             .collect();
-        let mut bounds = Vec::new();
+        let bounds = &mut sig.bounds;
         for ty in sig.before.iter_mut().chain(&mut sig.after) {
             transform_type(ty, &mut |ty| {
                 if let Type::Generic(g) = ty {
                     g.index = reassign[&g.index];
-                    if bounds.len() < g.index as usize {
-                        bounds.resize(g.index as usize + 1, TypeBound {});
+                    if bounds.len() <= g.index as usize {
+                        bounds.resize(
+                            g.index as usize + 1,
+                            TypeBound {
+                                name: String::new(),
+                            },
+                        );
                     }
+                    bounds[g.index as usize] = TypeBound {
+                        name: g.name.clone(),
+                    };
                 }
             });
         }
         sig
+    }
+}
+
+impl TreeHash for Signature {
+    fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(self.before.len().to_le_bytes());
+        sha.update(self.after.len().to_le_bytes());
+        for ty in &self.before {
+            ty.hash(sha);
+        }
+        for ty in &self.after {
+            ty.hash(sha);
+        }
     }
 }
 
@@ -424,11 +441,11 @@ where
     }
 }
 
-impl<T> fmt::Display for Signature<T>
-where
-    T: fmt::Display,
-{
+impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for bound in &self.bounds {
+            write!(f, "{} ", bound)?;
+        }
         write!(f, "( ")?;
         for ty in &self.before {
             write!(f, "{} ", ty)?;

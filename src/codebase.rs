@@ -69,7 +69,7 @@ impl CodeBase {
             errors: Vec::new(),
             code: String::from_utf8_lossy(&buffer).into_owned(),
         };
-        let mut unresolved_words: Vec<_> = match parse(buffer.as_slice()) {
+        let mut unresolved_items: Vec<_> = match parse(buffer.as_slice()) {
             Ok(uw) => uw.into_iter().map(|ud| (ud, None)).collect(),
             Err(e) => {
                 comp.errors.push(e.span.sp(CompileError::Parse(e.kind)));
@@ -78,24 +78,36 @@ impl CodeBase {
         };
         let mut last_len = 0;
         loop {
-            unresolved_words = unresolved_words
+            unresolved_items = unresolved_items
                 .into_iter()
-                .filter_map(|(unresolved, _)| match resolve_word(&unresolved, &defs) {
-                    Ok(word) => {
-                        println!("{} {}", unresolved.data.name.data, word.sig);
-                        defs.words.insert(unresolved.data.name.data, word);
-                        None
-                    }
-                    Err(e) => Some((unresolved, Some(e))),
+                .filter_map(|(unresolved, _)| match &unresolved {
+                    UnresolvedItem::Word(uw) => match resolve_word(&uw, &defs) {
+                        Ok(word) => {
+                            println!("{} {}", uw.data.name.data, word.sig);
+                            defs.words
+                                .insert(Ident::no_module(uw.data.name.data.clone()), word);
+                            None
+                        }
+                        Err(e) => Some((unresolved, Some(e))),
+                    },
+                    UnresolvedItem::Rule(ur) => match resolve_rule(&ur, &defs) {
+                        Ok(rule) => {
+                            println!("{} {}", ur.data.name.data, rule.sig);
+                            defs.rules
+                                .insert(Ident::no_module(ur.data.name.data.clone()), rule);
+                            None
+                        }
+                        Err(e) => Some((unresolved, Some(e))),
+                    },
                 })
                 .collect();
-            if unresolved_words.len() == last_len {
+            if unresolved_items.len() == last_len {
                 break;
             }
-            last_len = unresolved_words.len();
+            last_len = unresolved_items.len();
         }
         comp.errors.extend(
-            unresolved_words
+            unresolved_items
                 .into_iter()
                 .filter_map(|(_, e)| e.map(|e| e.map(Into::into))),
         );
@@ -157,6 +169,7 @@ pub enum CodeBaseError {
 #[derive(Debug)]
 pub struct Defs {
     pub words: ItemDefs<Word>,
+    pub rules: ItemDefs<Rule>,
     pub types: ItemDefs<Type>,
 }
 
@@ -164,6 +177,7 @@ impl Default for Defs {
     fn default() -> Self {
         let mut defs = Defs {
             words: Default::default(),
+            rules: Default::default(),
             types: Default::default(),
         };
         for &bi in BuiltinWord::all().iter() {
@@ -177,7 +191,7 @@ impl Default for Defs {
 #[derive(Debug, Clone)]
 pub struct ItemDefs<T> {
     idents: HashMap<Ident, Hash>,
-    items: HashMap<Hash, T>,
+    items: HashMap<Hash, (T, Ident)>,
 }
 
 impl<T> Default for ItemDefs<T> {
@@ -206,17 +220,20 @@ where
                 .and_then(|ident| self.idents.get(&ident))
         })
     }
+    pub fn ident_by_hash(&self, hash: &Hash) -> Option<&Ident> {
+        self.items.get(hash).map(|(_, ident)| ident)
+    }
     pub fn by_ident(&self, ident: &Ident) -> Option<(&Hash, &T)> {
         self.hash_by_ident(ident)
             .and_then(|hash| self.by_hash(hash).map(|item| (hash, item)))
     }
     pub fn by_hash(&self, hash: &Hash) -> Option<&T> {
-        self.items.get(hash)
+        self.items.get(hash).map(|(item, _)| item)
     }
     pub fn insert(&mut self, ident: Ident, item: T) {
         let hash = item.hash_finish();
-        self.idents.insert(ident, hash);
-        self.items.insert(hash, item);
+        self.idents.insert(ident.clone(), hash);
+        self.items.insert(hash, (item, ident));
     }
 }
 

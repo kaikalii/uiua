@@ -58,12 +58,12 @@ fn generic(name: &str, i: u8) -> Type {
     Type::Generic(Generic::new(name, i))
 }
 
-fn t() -> Type {
-    generic("T", 0)
+fn a() -> Type {
+    generic("a", 0)
 }
 
-fn u() -> Type {
-    generic("U", 1)
+fn b() -> Type {
+    generic("b", 1)
 }
 
 impl BuiltinWord {
@@ -72,12 +72,12 @@ impl BuiltinWord {
     }
     pub fn sig(&self) -> Signature {
         let (before, after) = match self {
-            BuiltinWord::Dup => (vec![t()], vec![t(); 2]),
+            BuiltinWord::Dup => (vec![a()], vec![a(); 2]),
             BuiltinWord::List => (vec![], vec![generic_list()]),
-            BuiltinWord::App => (vec![generic_list(), t()], vec![generic_list()]),
-            BuiltinWord::Swap => (vec![t(), u()], vec![u(), t()]),
-            BuiltinWord::Add => (vec![t(); 2], vec![t()]),
-            BuiltinWord::Pop => (vec![t()], vec![]),
+            BuiltinWord::App => (vec![generic_list(), a()], vec![generic_list()]),
+            BuiltinWord::Swap => (vec![a(), b()], vec![b(), a()]),
+            BuiltinWord::Add => (vec![a(); 2], vec![a()]),
+            BuiltinWord::Pop => (vec![a()], vec![]),
             BuiltinWord::Call(before, after) => {
                 let mut params = DefaultParams::default();
                 let before: Vec<_> = params.by_ref().take(*before as usize).collect();

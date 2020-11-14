@@ -31,6 +31,21 @@ pub trait TreeHash {
     }
 }
 
+impl<T> TreeHash for T
+where
+    T: AsRef<[u8]>,
+{
+    fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(self);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Item {
+    Word(Word),
+    Rule(Rule),
+}
+
 #[derive(Debug, Clone)]
 pub struct Word {
     pub sig: Signature,
@@ -70,6 +85,30 @@ pub enum WordKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct Rule {
+    pub hash: Hash,
+    pub sig: Signature,
+}
+
+impl TreeHash for Rule {
+    fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(&self.hash);
+        self.sig.hash(sha);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitItem {
+    pub parent: Hash,
+    pub kind: TraitItemKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum TraitItemKind {
+    SigOnly { i: u8, sig: Signature },
+}
+
+#[derive(Debug, Clone)]
 pub enum Node {
     Ident(Hash),
     SelfIdent,
@@ -94,10 +133,28 @@ impl TreeHash for Node {
 }
 
 #[derive(Debug, Clone)]
+pub enum UnresolvedItem {
+    Word(Sp<UnresolvedWord>),
+    Rule(Sp<UnresolvedRule>),
+}
+
+#[derive(Debug, Clone)]
 pub struct UnresolvedWord {
-    pub name: Sp<Ident>,
+    pub name: Sp<String>,
     pub sig: Option<UnresolvedSignature>,
     pub nodes: Vec<Sp<UnresolvedNode>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnresolvedRule {
+    pub name: Sp<String>,
+    pub hash: Option<Hash>,
+    pub sig: UnresolvedSignature,
+}
+
+#[derive(Debug, Clone)]
+pub enum UnresolvedRuleItem {
+    SigOnly(UnresolvedSignature),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -112,6 +169,9 @@ impl Ident {
     }
     pub fn base(name: String) -> Self {
         Ident::new(Some("base".into()), name)
+    }
+    pub fn no_module(name: String) -> Self {
+        Ident::new(None, name)
     }
     pub fn single_and_eq(&self, s: &str) -> bool {
         self.module.is_none() && self.name == s

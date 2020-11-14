@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, ops::*};
+use std::{cmp::Ordering, error::Error, fmt, ops::*};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Loc {
@@ -68,6 +68,24 @@ where
 }
 
 impl<T> Eq for Sp<T> where T: Eq {}
+
+impl<T> PartialOrd for Sp<T>
+where
+    T: PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.data.partial_cmp(&other.data)
+    }
+}
+
+impl<T> Ord for Sp<T>
+where
+    T: Ord,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.data.cmp(&other.data)
+    }
+}
 
 impl<T> Deref for Sp<T> {
     type Target = T;

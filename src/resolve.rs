@@ -2,15 +2,21 @@ use itertools::*;
 
 use crate::{ast::*, codebase::*, span::*, types::*};
 
-pub fn resolve_word(def: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
-    let given_sig = if let Some(sig) = &def.sig {
+pub fn resolve_rule(rule: &Sp<UnresolvedRule>, defs: &Defs) -> SpResult<Rule, ResolutionError> {
+    let hash = rule.hash.unwrap_or_else(|| rule.name.hash_finish());
+    let sig = resolve_sig(&rule.sig, defs, &rule.sig.bounds)?.data;
+    Ok(Rule { hash, sig })
+}
+
+pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
+    let given_sig = if let Some(sig) = &word.sig {
         Some(resolve_sig(sig, defs, &sig.bounds)?)
     } else {
         None
     };
     let given_sig = given_sig.as_ref();
-    let nodes = resolve_sequence(&def.nodes, defs, &def.name, given_sig.map(Sp::as_ref))?;
-    let sig = seq_sig(&nodes, defs, given_sig, &def.name)?;
+    let nodes = resolve_sequence(&word.nodes, defs, &word.name, given_sig.map(Sp::as_ref))?;
+    let sig = seq_sig(&nodes, defs, given_sig, &word.name)?;
     Ok(Word {
         sig: sig.data,
         kind: WordKind::Uiua(nodes.into_iter().map(|n| n.data).collect()),
@@ -20,14 +26,14 @@ pub fn resolve_word(def: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, Res
 pub fn resolve_sequence(
     nodes: &[Sp<UnresolvedNode>],
     defs: &Defs,
-    name: &Sp<Ident>,
+    name: &Sp<String>,
     _sig: Option<Sp<&Signature>>,
 ) -> SpResult<Vec<Sp<Node>>, ResolutionError> {
     let mut resolved_nodes = Vec::new();
     for (i, node) in nodes.iter().enumerate() {
         match &node.data {
             UnresolvedNode::Ident(ident) => {
-                if &name.data == ident {
+                if ident.single_and_eq(&name.data) {
                     resolved_nodes.push(node.span.sp(Node::SelfIdent));
                 } else if let Some((hash, _)) = defs.words.by_ident(ident) {
                     resolved_nodes.push(node.span.sp(Node::Ident(*hash)));
@@ -94,7 +100,7 @@ pub fn resolve_sequence(
                         }
                     }
                 } else {
-                    return Err(node.span.sp(ResolutionError::Unknown(ident.clone())));
+                    return Err(node.span.sp(ResolutionError::UnknownWord(ident.clone())));
                 }
             }
             UnresolvedNode::Literal(lit) => {
@@ -111,7 +117,7 @@ pub fn resolve_sequence(
 pub fn resolve_sig(
     sig: &UnresolvedSignature,
     defs: &Defs,
-    params: &Option<UnresolvedTypeParams>,
+    params: &UnresolvedTypeParams,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     let mut resolved_before = Vec::new();
     let mut resolved_after = Vec::new();
@@ -120,8 +126,8 @@ pub fn resolve_sig(
         (&sig.after, &mut resolved_after),
     ] {
         for unresolved in *unresolved {
-            if let (Some(type_params), UnresolvedType::Ident(ident)) = (params, &**unresolved) {
-                if let Some(i) = type_params.iter().position(|n| ident.single_and_eq(&**n)) {
+            if let UnresolvedType::Ident(ident) = &**unresolved {
+                if let Some(i) = params.iter().position(|n| ident.single_and_eq(&**n)) {
                     resolved.push(Type::Generic(Generic::new(ident.name.clone(), i as u8)));
                 } else {
                     resolved.push(resolve_type(unresolved, defs, params)?);
@@ -131,13 +137,23 @@ pub fn resolve_sig(
             }
         }
     }
-    Ok(sig.span.sp(Signature::new(resolved_before, resolved_after)))
+    let bounds: Vec<_> = params
+        .iter()
+        .map(|param| TypeBound {
+            name: param.data.clone(),
+        })
+        .collect();
+    Ok(sig.span.sp(Signature::with_bounds(
+        bounds,
+        resolved_before,
+        resolved_after,
+    )))
 }
 
 pub fn resolve_type(
     ty: &Sp<UnresolvedType>,
     defs: &Defs,
-    params: &Option<UnresolvedTypeParams>,
+    params: &UnresolvedTypeParams,
 ) -> SpResult<Type, ResolutionError> {
     match &ty.data {
         UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
@@ -145,7 +161,7 @@ pub fn resolve_type(
             if let Some((_, ty)) = defs.types.by_ident(name) {
                 Ok(ty.clone())
             } else {
-                Err(ty.span.sp(ResolutionError::Unknown(name.clone())))
+                Err(ty.span.sp(ResolutionError::UnknownType(name.clone())))
             }
         }
     }
@@ -155,7 +171,7 @@ pub fn resolve_prim(
     prim: &UnresolvedPrimitive,
     defs: &Defs,
     span: Span,
-    params: &Option<UnresolvedTypeParams>,
+    params: &UnresolvedTypeParams,
 ) -> SpResult<Primitive, ResolutionError> {
     Ok(match prim {
         Primitive::Unit => Primitive::Unit,
@@ -176,20 +192,36 @@ pub fn seq_sig(
     nodes: &[Sp<Node>],
     defs: &Defs,
     given: Option<&Sp<Signature>>,
-    ident: &Sp<Ident>,
+    name: &Sp<String>,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     let mut iter = nodes.iter();
     let sig = if let Some(node) = iter.next() {
-        let mut sig = node_sig(node, defs, given, ident)?;
+        let mut sig = node_sig(node, defs, given, name)?;
         for node in iter {
-            let next_sig = node_sig(node, defs, given, ident)?;
+            let next_sig = node_sig(node, defs, given, name)?;
             sig = node.span.sp(sig.compose(&*next_sig).map_err(|e| {
                 node.span.sp(match e {
-                    TypeError::Mismatch { .. } => ResolutionError::TypeMismatch {
-                        ident: ident.data.clone(),
-                        expected: next_sig.data.clone(),
-                        found: sig.data.clone(),
-                    },
+                    TypeError::Mismatch { .. } => {
+                        let ident = match &node.data {
+                            Node::Ident(hash) => defs
+                                .words
+                                .ident_by_hash(hash)
+                                .expect("unknown hash")
+                                .clone(),
+                            Node::SelfIdent => Ident::no_module(name.data.clone()),
+                            Node::Literal(_) => {
+                                panic!("composition with literal node has type mismatch")
+                            }
+                            Node::Quotation(_) => {
+                                panic!("composition with quotation node has type mismatch")
+                            }
+                        };
+                        ResolutionError::TypeMismatch {
+                            ident,
+                            expected: next_sig.data.clone(),
+                            found: sig.data.clone(),
+                        }
+                    }
                 })
             })?);
         }
@@ -200,7 +232,7 @@ pub fn seq_sig(
     if let Some(given) = given {
         if given != &sig {
             return Err(given.span.sp(ResolutionError::SignatureMismatch {
-                ident: ident.data.clone(),
+                name: name.data.clone(),
                 expected: given.data.clone(),
                 found: sig.data,
             }));
@@ -213,7 +245,7 @@ pub fn node_sig(
     node: &Sp<Node>,
     defs: &Defs,
     self_sig: Option<&Sp<Signature>>,
-    ident: &Sp<Ident>,
+    name: &Sp<String>,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     match &node.data {
         Node::Ident(hash) => {
@@ -221,12 +253,14 @@ pub fn node_sig(
                 .span
                 .sp(defs.words.by_hash(hash).expect("unknown hash").sig.clone()))
         }
-        Node::SelfIdent => self_sig
-            .cloned()
-            .ok_or_else(|| ident.clone().map(ResolutionError::RecursiveNoSignature)),
+        Node::SelfIdent => self_sig.cloned().ok_or_else(|| {
+            name.clone()
+                .map(Ident::no_module)
+                .map(ResolutionError::RecursiveNoSignature)
+        }),
         Node::Quotation(nodes) => Ok(node.span.sp(Signature::new(
             vec![],
-            vec![Primitive::Quotation(seq_sig(nodes, defs, None, ident)?.data).into()],
+            vec![Primitive::Quotation(seq_sig(nodes, defs, None, name)?.data).into()],
         ))),
         Node::Literal(lit) => Ok(node
             .span
@@ -248,16 +282,18 @@ pub enum ResolutionError {
         found: Signature,
     },
     #[error("Unknown word \"{0}\"")]
-    Unknown(Ident),
+    UnknownWord(Ident),
+    #[error("Unknown type \"{0}\"")]
+    UnknownType(Ident),
     #[error("Rescursive definition {0:?} must have an explicit type signature")]
     RecursiveNoSignature(Ident),
     #[error(
         "Signature mismatch \n\
-        {ident} is annoteted with the signature {expected},\n\
+        {name} is annoteted with the signature {expected},\n\
         but its body resolves to {found}"
     )]
     SignatureMismatch {
-        ident: Ident,
+        name: String,
         expected: Signature,
         found: Signature,
     },
