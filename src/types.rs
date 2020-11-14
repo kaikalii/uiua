@@ -212,29 +212,31 @@ impl Signature {
         generics.dedup();
         generics
     }
-    pub fn compose(&self, b: &Self) -> Result<Self, TypeError> {
+    pub fn exclusive_params(&self, other: &Self) -> Self {
+        let add_to_b = self.generics().last().copied().unwrap_or(0)
+            - other.generics().first().copied().unwrap_or(0)
+            + 1;
+        let mut res = other.clone();
+        for ty in &mut res.before {
+            transform_type(ty, &mut |ty| {
+                if let Type::Generic(g) = ty {
+                    g.index += add_to_b;
+                }
+            });
+        }
+        for ty in &mut res.after {
+            transform_type(ty, &mut |ty| {
+                if let Type::Generic(g) = ty {
+                    g.index += add_to_b;
+                }
+            });
+        }
+        res
+    }
+    pub fn compose(&self, other: &Self) -> Result<Self, TypeError> {
         // println!();
         let mut a = self.clone();
-        let mut b = b.clone();
-        // Make b's generics different than a's
-        let add_to_b = a.generics().last().copied().unwrap_or(0)
-            - b.generics().first().copied().unwrap_or(0)
-            + 1;
-        // println!("b + {}", add_to_b);
-        for ty in &mut b.before {
-            transform_type(ty, &mut |ty| {
-                if let Type::Generic(g) = ty {
-                    g.index += add_to_b;
-                }
-            });
-        }
-        for ty in &mut b.after {
-            transform_type(ty, &mut |ty| {
-                if let Type::Generic(g) = ty {
-                    g.index += add_to_b;
-                }
-            });
-        }
+        let mut b = self.exclusive_params(other);
         let mut resolver = TypeResolver::default();
         // Loop over the reversed outputs of a zipped with the reversed inputs of b
         let mut i = 0;
@@ -245,28 +247,18 @@ impl Signature {
                 // println!("b {}", b);
                 let a_len = a.after.len();
                 let b_len = b.before.len();
-                let a_after = &mut a.after[a_len - 1 - i];
-                let b_before = &mut b.before[b_len - 1 - i];
+                let a_after = &a.after[a_len - 1 - i];
+                let b_before = &b.before[b_len - 1 - i];
                 if a_after != b_before && a_after.generics() == b_before.generics() {
                     return Err(TypeError::Mismatch {
                         expected: b_before.clone(),
                         found: a_after.clone(),
                     });
                 }
-                trade_generics(a_after, b_before, &mut resolver);
+                resolver.align(a_after, b_before);
                 // println!("{:?}", resolver);
-                for ty in &mut a.before {
-                    resolver.resolve(ty);
-                }
-                for ty in &mut a.after {
-                    resolver.resolve(ty);
-                }
-                for ty in &mut b.before {
-                    resolver.resolve(ty);
-                }
-                for ty in &mut b.after {
-                    resolver.resolve(ty);
-                }
+                resolver.resolve_sig(&mut a);
+                resolver.resolve_sig(&mut b);
                 // println!("a {}", a);
                 // println!("b {}", b);
                 let a_after = &a.after[a_len - 1 - i];
@@ -301,32 +293,37 @@ impl Signature {
         // println!("ab {}", sig);
         Ok(sig)
     }
-}
-
-fn trade_generics(a: &mut Type, b: &mut Type, resolver: &mut TypeResolver) {
-    match (a, b) {
-        (Type::Generic(a), Type::Generic(b)) => {
-            resolver.insert(b.clone(), &Type::Generic(a.clone()));
-            resolver.insert(a.clone(), &Type::Generic(b.clone()));
+    fn minimum_equivalent(&self) -> Self {
+        let mut me = self.clone();
+        while !me.before.is_empty() && !me.after.is_empty() && me.before.first() == me.after.first()
+        {
+            me.before.remove(0);
+            me.after.remove(0);
         }
-        (Type::Generic(a), ref b) => {
-            resolver.insert(a.clone(), b);
+        me
+    }
+    pub fn is_equivalent_to(&self, other: &Self) -> bool {
+        if self.before.len() != other.before.len() || self.after.len() != self.after.len() {
+            let a = self.minimum_equivalent();
+            let b = other.minimum_equivalent();
+            return if &a == self && &b == other {
+                false
+            } else {
+                a.is_equivalent_to(&b)
+            };
         }
-        (ref a, Type::Generic(b)) => {
-            resolver.insert(b.clone(), a);
+        let mut a = self.clone();
+        let mut b = self.exclusive_params(other);
+        let mut resolver = TypeResolver::default();
+        for (a, b) in a.before.iter().zip(&b.before) {
+            resolver.align(a, b);
         }
-        (Type::Prim(a), Type::Prim(b)) => match (a, b) {
-            (Primitive::List(a), Primitive::List(b)) => trade_generics(a, b, resolver),
-            (Primitive::Quotation(a), Primitive::Quotation(b)) => {
-                for (a, b) in a.before.iter_mut().rev().zip(b.before.iter_mut().rev()) {
-                    trade_generics(a, b, resolver);
-                }
-                for (a, b) in a.after.iter_mut().rev().zip(b.after.iter_mut().rev()) {
-                    trade_generics(a, b, resolver);
-                }
-            }
-            _ => {}
-        },
+        for (a, b) in a.after.iter().zip(&b.after) {
+            resolver.align(a, b);
+        }
+        resolver.resolve_sig(&mut a);
+        resolver.resolve_sig(&mut b);
+        a.before == b.before && a.after == other.after
     }
 }
 
@@ -334,6 +331,40 @@ fn trade_generics(a: &mut Type, b: &mut Type, resolver: &mut TypeResolver) {
 struct TypeResolver(Vec<(BTreeSet<Generic>, Option<Type>)>);
 
 impl TypeResolver {
+    fn resolve_sig(&self, sig: &mut Signature) {
+        for ty in &mut sig.before {
+            self.resolve_ty(ty);
+        }
+        for ty in &mut sig.after {
+            self.resolve_ty(ty);
+        }
+    }
+    fn align(&mut self, a: &Type, b: &Type) {
+        match (a, b) {
+            (Type::Generic(a), Type::Generic(b)) => {
+                self.insert(b.clone(), &Type::Generic(a.clone()));
+                self.insert(a.clone(), &Type::Generic(b.clone()));
+            }
+            (Type::Generic(a), ref b) => {
+                self.insert(a.clone(), b);
+            }
+            (ref a, Type::Generic(b)) => {
+                self.insert(b.clone(), a);
+            }
+            (Type::Prim(a), Type::Prim(b)) => match (a, b) {
+                (Primitive::List(a), Primitive::List(b)) => self.align(a, b),
+                (Primitive::Quotation(a), Primitive::Quotation(b)) => {
+                    for (a, b) in a.before.iter().rev().zip(b.before.iter().rev()) {
+                        self.align(a, b);
+                    }
+                    for (a, b) in a.after.iter().rev().zip(b.after.iter().rev()) {
+                        self.align(a, b);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
     fn insert(&mut self, a: Generic, ty: &Type) {
         if let Type::Generic(b) = ty {
             let a_buc = self.0.iter().position(|(buc, _)| buc.contains(&a));
@@ -380,7 +411,7 @@ impl TypeResolver {
                 }
             })
     }
-    fn resolve(&mut self, ty: &mut Type) {
+    fn resolve_ty(&self, ty: &mut Type) {
         transform_type(ty, &mut |ty| {
             if let Type::Generic(g) = ty {
                 if let Some(new) = self.get(g) {

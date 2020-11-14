@@ -226,7 +226,7 @@ pub fn seq_sig(
         Span::new(Loc::new(1, 1), Loc::new(1, 1)).sp(Signature::new(vec![], vec![]))
     };
     if let Some(given) = given {
-        if given != &sig {
+        if !sig.is_equivalent_to(given) {
             return Err(given.span.sp(ResolutionError::SignatureMismatch {
                 name: name.data.clone(),
                 expected: given.data.clone(),
@@ -234,7 +234,7 @@ pub fn seq_sig(
             }));
         }
     }
-    Ok(sig)
+    Ok(given.cloned().unwrap_or(sig))
 }
 
 pub fn node_sig(
@@ -285,7 +285,7 @@ pub enum ResolutionError {
     RecursiveNoSignature(Ident),
     #[error(
         "Signature mismatch \n\
-        {name} is annoteted with the signature {expected},\n\
+        {name} is annotated with the signature {expected},\n\
         but its body resolves to {found}"
     )]
     SignatureMismatch {
