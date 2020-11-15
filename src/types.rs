@@ -4,6 +4,7 @@ use std::{
     fmt, mem,
 };
 
+use colored::*;
 use serde::*;
 use sha3::*;
 
@@ -507,15 +508,15 @@ impl fmt::Display for Signature {
         for param in &self.params() {
             write!(f, "{} ", param.name)?;
         }
-        write!(f, "( ")?;
+        write!(f, "{}", "( ".bright_black())?;
         for ty in &self.before {
             write!(f, "{} ", ty)?;
         }
-        write!(f, "-- ")?;
+        write!(f, "{}", "-- ".bright_black())?;
         for ty in &self.after {
             write!(f, "{} ", ty)?;
         }
-        write!(f, ")")
+        write!(f, "{}", ")".bright_black())
     }
 }
 

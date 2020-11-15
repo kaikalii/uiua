@@ -168,9 +168,10 @@ impl Codebase {
         if let Some(comp) = &*self.comp.lock().unwrap() {
             if comp.errors.is_empty() {
                 let mut failures = 0;
+                let mut defs = self.defs();
                 // Add words
                 let mut words_added = 0;
-                for (hash, entry) in &self.defs().words.items {
+                for (hash, entry) in &defs.words.items {
                     if entry.item.appears_in_codebase() {
                         if let Err(e) = entry.save(hash, &self.top_dir) {
                             println!("{} adding word: {}", "Error".bright_red(), e);
@@ -183,7 +184,7 @@ impl Codebase {
                 // Report
                 if words_added > 0 {
                     println!("{}", format!("Added {} words", words_added).bright_green());
-                    if let Err(e) = self.defs().words.update_names() {
+                    if let Err(e) = defs.words.update_names() {
                         println!("{} {}", "Error updating name index:".bright_red(), e);
                     }
                 }
@@ -201,6 +202,55 @@ impl Codebase {
             }
         } else {
             println!("Nothing to add!");
+        }
+        println!();
+    }
+    pub fn ls(&self, path: Option<String>) {
+        println!();
+        let path = path.or_else(|| self.path.lock().unwrap().clone());
+        let mut defs = self.defs();
+        let mut track_i = 1;
+        // Words
+        let mut word_data = Vec::new();
+        for (ident, hashes) in &defs.words.names.0 {
+            if path == ident.module {
+                for hash in hashes {
+                    let entry = defs
+                        .words
+                        .by_hash(hash)
+                        .expect("name referes to invalid hash");
+                    word_data.push((ident.clone(), entry.item.sig.to_string(), *hash));
+                }
+            }
+        }
+        word_data.sort();
+        let max_ident_len = word_data
+            .iter()
+            .map(|(ident, ..)| ident.to_string().len())
+            .max()
+            .unwrap_or(0);
+        let pad_diff =
+            "".bright_white().bold().to_string().len() + "".bright_black().to_string().len();
+        defs.words.tracker.clear();
+        for (ident, sig, hash) in word_data {
+            println!(
+                "{}. {:pad$} {}",
+                track_i,
+                format!(
+                    "{}{}",
+                    if let Some(m) = ident.module {
+                        format!("{}.", m)
+                    } else {
+                        String::new()
+                    }
+                    .bright_black(),
+                    ident.name.bright_white().bold()
+                ),
+                sig,
+                pad = max_ident_len + pad_diff
+            );
+            defs.words.tracker.insert(track_i, hash);
+            track_i += 1;
         }
         println!();
     }
@@ -374,6 +424,7 @@ pub struct ItemDefs<T> {
     names: NameIndex<T>,
     hashes: HashMap<Ident, BTreeSet<Hash>>,
     items: HashMap<Hash, ItemEntry<T>>,
+    tracker: HashMap<usize, Hash>,
 }
 
 impl<T> ItemDefs<T>
@@ -387,6 +438,7 @@ where
             names: NameIndex::load(top_dir)?,
             hashes: HashMap::new(),
             items: HashMap::new(),
+            tracker: HashMap::new(),
         })
     }
     pub fn update_names(&mut self) -> Result<(), CodebaseError> {

@@ -55,6 +55,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         match Command::from_iter_safe(args) {
             Ok(com) => match com {
                 Command::Add => cb.add(),
+                Command::Ls { path } => cb.ls(path),
                 Command::Cd { path } => cb.cd(&path),
                 Command::Exit => break,
             },
@@ -67,7 +68,8 @@ fn run() -> Result<(), Box<dyn Error>> {
 
 #[derive(StructOpt)]
 enum Command {
-    Add,
+    Ls { path: Option<String> },
     Cd { path: String },
+    Add,
     Exit,
 }
