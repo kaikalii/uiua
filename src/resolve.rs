@@ -140,7 +140,7 @@ pub fn resolve_sequence(
 
 pub fn resolve_sig(
     sig: &Sp<UnresolvedSignature>,
-    defs: &Defs,
+    defs: &mut Defs,
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     let mut resolved_before = Vec::new();
@@ -158,7 +158,7 @@ pub fn resolve_sig(
 
 pub fn resolve_type(
     ty: &Sp<UnresolvedType>,
-    defs: &Defs,
+    defs: &mut Defs,
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Type, ResolutionError> {
     if let UnresolvedType::Ident(ident) = &**ty {
@@ -178,7 +178,7 @@ pub fn resolve_type(
 
 fn resolve_concrete_type(
     ty: &Sp<UnresolvedType>,
-    defs: &Defs,
+    defs: &mut Defs,
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Type, ResolutionError> {
     match &ty.data {
@@ -195,7 +195,7 @@ fn resolve_concrete_type(
 
 pub fn resolve_prim(
     prim: &UnresolvedPrimitive,
-    defs: &Defs,
+    defs: &mut Defs,
     span: Span,
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Primitive, ResolutionError> {

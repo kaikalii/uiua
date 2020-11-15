@@ -13,6 +13,7 @@ use std::{
 use colored::*;
 use itertools::*;
 use notify::{self, watcher, DebouncedEvent, RecursiveMode, Watcher};
+use rayon::prelude::*;
 use serde::*;
 
 use crate::{ast::*, builtin::*, parse::*, resolve::*, span::*, types::*};
@@ -94,7 +95,7 @@ impl Codebase {
     }
     fn handle_file_change(&self, path: &Path) -> Result<(), CodebaseError> {
         let mut defs = self.defs();
-        *defs = Defs::new(&self.top_dir, self.path.lock().unwrap().clone())?;
+        defs.soft_reset();
         let mut old_comp = self.comp.lock().unwrap();
         let path = path.to_path_buf();
         let buffer = fs::read(&path)?;
@@ -175,7 +176,7 @@ impl Codebase {
                 let mut defs = self.defs();
                 // Add words
                 let mut words_added = 0;
-                for (hash, entry) in &defs.words.items {
+                for (hash, entry) in &defs.words.entries {
                     if let Err(e) = entry.save(hash, &self.top_dir) {
                         println!("{} adding word: {}", "Error".bright_red(), e);
                         failures += 1;
@@ -199,6 +200,7 @@ impl Codebase {
                 if failures == 0 && words_added == 0 {
                     println!("Nothing added");
                 }
+                defs.hard_reset();
             } else {
                 println!("Cant add when there are errors");
             }
@@ -212,6 +214,20 @@ impl Codebase {
         let path = path.or_else(|| self.path.lock().unwrap().clone());
         let mut defs = self.defs();
         let mut track_i = 1;
+        // Modules
+        if path.is_none() {
+            println!("{}", "Modules".bright_white().bold());
+            let mut set = BTreeSet::new();
+            for ident in defs.words.names.0.keys() {
+                if let Some(module) = &ident.module {
+                    if !set.contains(&module) {
+                        set.insert(module);
+                        println!("{:>3}. {}", track_i, module.bright_white());
+                        track_i += 1
+                    }
+                }
+            }
+        }
         // Words
         let mut word_data = Vec::new();
         for (ident, hashes) in &defs.words.names.0 {
@@ -226,13 +242,15 @@ impl Codebase {
             }
         }
         word_data.sort();
+        if !word_data.is_empty() {
+            println!("{}", "Words".bright_white().bold());
+        }
         let max_ident_len = word_data
             .iter()
             .map(|(ident, ..)| ident.to_string().len())
             .max()
             .unwrap_or(0);
-        let pad_diff =
-            "".bright_white().bold().to_string().len() + "".bright_black().to_string().len();
+        let pad_diff = "".bright_white().to_string().len() + "".bright_black().to_string().len();
         defs.words.tracker.clear();
         for (ident, sig, hash) in word_data {
             println!(
@@ -277,7 +295,13 @@ pub enum CodebaseError {
     #[error("{0}")]
     Notify(#[from] notify::Error),
     #[error("{0}")]
-    Ron(#[from] serde_yaml::Error),
+    RmpSer(#[from] rmp_serde::encode::Error),
+    #[error("{0}")]
+    RmpDeser(#[from] rmp_serde::decode::Error),
+    #[error("{0}")]
+    TomlSet(#[from] toml::ser::Error),
+    #[error("{0}")]
+    TomlDeser(#[from] toml::de::Error),
 }
 
 pub type Uses = Arc<Mutex<BTreeSet<String>>>;
@@ -304,10 +328,18 @@ impl Defs {
         };
         Ok(defs)
     }
+    pub fn soft_reset(&mut self) {
+        self.words.soft_reset();
+        self.types.soft_reset();
+    }
+    pub fn hard_reset(&mut self) {
+        self.words.hard_reset();
+        self.types.hard_reset();
+    }
 }
 
 pub trait CodebaseItem:
-    TreeHash + std::fmt::Debug + Clone + Serialize + de::DeserializeOwned
+    TreeHash + std::fmt::Debug + Clone + Serialize + de::DeserializeOwned + Send
 {
     const FOLDER: &'static str;
     fn get_names(top_dir: &Path) -> Result<NameIndex<Self>, CodebaseError> {
@@ -325,24 +357,28 @@ pub trait CodebaseItem:
     }
     fn get_entries(top_dir: &Path) -> Result<BTreeMap<Hash, ItemEntry<Self>>, CodebaseError> {
         let folder = top_dir.join(Self::FOLDER);
-        let mut entries = BTreeMap::new();
         if !folder.exists() {
-            return Ok(entries);
+            return Ok(BTreeMap::new());
         }
-        for entry in fs::read_dir(folder)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                if let Some(stem) = entry.path().file_stem() {
-                    if let Ok(hash) = Hash::try_from(stem.to_string_lossy().into_owned()) {
-                        ItemEntry::<Self>::load(&hash, top_dir).unwrap();
-                        if let Ok(entry) = ItemEntry::<Self>::load(&hash, top_dir) {
-                            entries.insert(hash, entry);
+        fs::read_dir(folder)?
+            .par_bridge()
+            .map(
+                |entry| -> Result<Option<(Hash, ItemEntry<Self>)>, CodebaseError> {
+                    let entry = entry?;
+                    if entry.file_type()?.is_file() {
+                        if let Some(stem) = entry.path().file_stem() {
+                            if let Ok(hash) = Hash::try_from(stem.to_string_lossy().into_owned()) {
+                                if let Ok(entry) = ItemEntry::<Self>::load(&hash, top_dir) {
+                                    return Ok(Some((hash, entry)));
+                                }
+                            }
                         }
                     }
-                }
-            }
-        }
-        Ok(entries)
+                    Ok(None)
+                },
+            )
+            .filter_map(Result::transpose)
+            .collect()
     }
 }
 
@@ -367,12 +403,12 @@ where
     pub fn save(&self, hash: &Hash, top_dir: &Path) -> Result<(), CodebaseError> {
         let folder = top_dir.join(T::FOLDER);
         fs::create_dir_all(&folder)?;
-        fs::write(folder.join(hash.to_string()), serde_yaml::to_string(self)?)?;
+        fs::write(folder.join(hash.to_string()), rmp_serde::to_vec(self)?)?;
         Ok(())
     }
     pub fn load(hash: &Hash, top_dir: &Path) -> Result<Self, CodebaseError> {
-        let s = fs::read_to_string(top_dir.join(T::FOLDER).join(hash.to_string()))?;
-        Ok(serde_yaml::from_str(&s)?)
+        let s = fs::read(top_dir.join(T::FOLDER).join(hash.to_string()))?;
+        Ok(rmp_serde::from_slice(&s)?)
     }
     pub fn format_names(&self) -> String {
         self.names
@@ -402,18 +438,18 @@ where
     T: CodebaseItem,
 {
     pub fn load(top_dir: &Path) -> Result<Self, CodebaseError> {
-        let s = if let Ok(s) = fs::read_to_string(top_dir.join(T::FOLDER).join("names")) {
+        let s = if let Ok(s) = fs::read_to_string(top_dir.join(T::FOLDER).join("names.toml")) {
             s
         } else {
             return Ok(NameIndex::default());
         };
-        Ok(serde_yaml::from_str(&s)?)
+        Ok(toml::from_str(&s)?)
     }
     pub fn save(&self, top_dir: &Path) -> Result<(), CodebaseError> {
         fs::create_dir_all(&top_dir)?;
         fs::write(
-            top_dir.join(T::FOLDER).join("names"),
-            serde_yaml::to_string(self)?,
+            top_dir.join(T::FOLDER).join("names.toml"),
+            toml::to_string_pretty(self)?,
         )?;
         Ok(())
     }
@@ -425,9 +461,12 @@ pub struct ItemDefs<T> {
     uses: Uses,
     names: NameIndex<T>,
     hashes: BTreeMap<Ident, BTreeSet<Hash>>,
-    items: BTreeMap<Hash, ItemEntry<T>>,
+    entries: ItemEntries<T>,
     tracker: BTreeMap<usize, Hash>,
+    entries_cache: Option<ItemEntries<T>>,
 }
+
+pub type ItemEntries<T> = BTreeMap<Hash, ItemEntry<T>>;
 
 impl<T> ItemDefs<T>
 where
@@ -439,16 +478,30 @@ where
             uses: uses.clone(),
             names: NameIndex::load(top_dir)?,
             hashes: BTreeMap::new(),
-            items: BTreeMap::new(),
+            entries: BTreeMap::new(),
             tracker: BTreeMap::new(),
+            entries_cache: None,
         })
+    }
+    pub fn soft_reset(&mut self) {
+        self.hashes.clear();
+        self.entries.clear();
+    }
+    pub fn hard_reset(&mut self) {
+        self.soft_reset();
+        self.entries_cache = None;
     }
     pub fn update_names(&mut self) -> Result<(), CodebaseError> {
         self.names = T::get_names(&self.top_dir)?;
         self.names.save(&self.top_dir)?;
         Ok(())
     }
-    pub fn hashes_by_ident(&self, ident: &Ident) -> Vec<Hash> {
+    pub fn saved_entried(&mut self) -> &ItemEntries<T> {
+        let top_dir = &self.top_dir;
+        self.entries_cache
+            .get_or_insert_with(|| T::get_entries(top_dir).unwrap_or_default())
+    }
+    pub fn hashes_by_ident(&mut self, ident: &Ident) -> Vec<Hash> {
         let mut ident_hashes = Vec::new();
         for ident in once(ident.clone()).chain(
             if ident.module.is_some() {
@@ -461,26 +514,24 @@ where
             if let Some(hashes) = self.hashes.get(&ident) {
                 ident_hashes.extend(hashes.clone());
             }
-            if let Ok(entries) = T::get_entries(&self.top_dir) {
-                for (hash, entry) in entries {
-                    if entry.names.contains(&ident) {
-                        ident_hashes.push(hash);
-                    }
+            for (hash, entry) in self.saved_entried() {
+                if entry.names.contains(&ident) {
+                    ident_hashes.push(*hash);
                 }
             }
         }
         ident_hashes
     }
     pub fn _idents_by_hash(&self, hash: &Hash) -> Option<BTreeSet<Ident>> {
-        self.items.get(hash).map(|entry| entry.names.clone())
+        self.entries.get(hash).map(|entry| entry.names.clone())
     }
-    pub fn by_ident(&self, ident: &Ident) -> impl Iterator<Item = (Hash, ItemEntry<T>)> + '_ {
+    pub fn by_ident(&mut self, ident: &Ident) -> impl Iterator<Item = (Hash, ItemEntry<T>)> + '_ {
         self.hashes_by_ident(ident)
             .into_iter()
             .filter_map(move |hash| self.by_hash(&hash).map(|item| (hash, item)))
     }
     pub fn by_hash(&self, hash: &Hash) -> Option<ItemEntry<T>> {
-        self.items
+        self.entries
             .get(hash)
             .cloned()
             .or_else(|| ItemEntry::<T>::load(hash, &self.top_dir).ok())
@@ -488,7 +539,7 @@ where
     pub fn insert(&mut self, ident: Ident, item: T) -> Hash {
         let hash = item.hash_finish();
         self.hashes.entry(ident.clone()).or_default().insert(hash);
-        self.items
+        self.entries
             .entry(hash)
             .or_insert_with(|| ItemEntry {
                 item,
@@ -501,7 +552,7 @@ where
 }
 
 impl ItemDefs<Word> {
-    pub fn by_ident_matching_sig(&self, ident: &Ident, sig: &Signature) -> Vec<(Hash, Word)> {
+    pub fn by_ident_matching_sig(&mut self, ident: &Ident, sig: &Signature) -> Vec<(Hash, Word)> {
         self.by_ident(ident)
             .filter(move |(_, entry)| sig.compose(&entry.item.sig).is_ok())
             .map(|(hash, entry)| (hash, entry.item))
@@ -529,7 +580,7 @@ impl Compilation {
         if self.errors.is_empty() {
             // Words
             let codebase_words = Word::get_entries(&defs.words.top_dir)?;
-            for (hash, new_entry) in &defs.words.items {
+            for (hash, new_entry) in &defs.words.entries {
                 let message = if let Some(cb_entry) = codebase_words.get(hash) {
                     if new_entry.names.intersection(&cb_entry.names).count() == 0 {
                         format!("as alias for {}", cb_entry.format_names())

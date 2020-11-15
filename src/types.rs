@@ -504,7 +504,14 @@ impl TypeResolver {
     }
 }
 
-static SIG_COLORS: &[Color] = &[Color::Cyan, Color::Green, Color::Yellow];
+static SIG_COLORS: &[Color] = &[
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Red,
+    Color::Magenta,
+    Color::Red,
+];
 
 fn format_ty(ty: &Type, s: &mut String, i: usize) {
     match ty {
@@ -515,17 +522,18 @@ fn format_ty(ty: &Type, s: &mut String, i: usize) {
 
 impl Signature {
     fn format(&self, s: &mut String, i: usize) {
-        s.push_str(&"( ".color(SIG_COLORS[i % SIG_COLORS.len()]).to_string());
+        let color = SIG_COLORS[i % SIG_COLORS.len()];
+        s.push_str(&"( ".color(color).to_string());
         for ty in &self.before {
             format_ty(ty, s, i + 1);
             s.push(' ');
         }
-        s.push_str(&"-- ".bright_black().to_string());
+        s.push_str(&"-- ".color(color).to_string());
         for ty in &self.after {
             format_ty(ty, s, i + 1);
             s.push(' ');
         }
-        s.push_str(&")".color(SIG_COLORS[i % SIG_COLORS.len()]).to_string())
+        s.push_str(&")".color(color).to_string())
     }
 }
 
