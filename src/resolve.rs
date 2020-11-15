@@ -23,7 +23,10 @@ pub fn resolve_sequence(
     given_sig: Option<&Sp<Signature>>,
 ) -> SpResult<(Vec<Sp<Node>>, Signature), ResolutionError> {
     let mut resolved_nodes = Vec::new();
-    let mut sig: Option<Sp<Signature>> = None;
+    // let mut sig: Option<Sp<Signature>> = None;
+    let mut sig: Option<Sp<Signature>> =
+        given_sig.map(|sig| sig.clone().map(|sig| sig.imagine_input_sig()));
+    let mut final_prepend = sig.clone().map(|sig| sig.data.after).unwrap_or_default();
     macro_rules! compose {
         ($next:expr, $name:expr) => {{
             let next = $next;
@@ -56,28 +59,30 @@ pub fn resolve_sequence(
                         sig.clone().map(|sig| sig.data)
                     };
                     let hash = if let Some(sig) = &sig_for_lookup {
-                        defs.words
-                            .by_ident_matching_sig(ident, &sig)
-                            .first()
-                            .map(|(hash, _)| *hash)
-                    } else {
-                        defs.words.by_ident(ident).next().map(|(hash, _)| hash)
-                    };
-                    let matching_idents = defs.words.by_ident(ident).count();
-                    let hash = if let Some(hash) = hash {
-                        node.span.sp(hash)
-                    } else if matching_idents == 0 {
-                        return Err(node.span.sp(ResolutionError::UnknownWord(ident.clone())));
-                    } else {
-                        return if let Some(sig) = &sig_for_lookup {
-                            Err(node.span.sp(ResolutionError::IncompatibleWord {
+                        let matching_idents = defs.words.by_ident_matching_sig(ident, &sig);
+                        if matching_idents.is_empty() {
+                            return if defs.words.by_ident(ident).count() > 0 {
+                                Err(node.span.sp(ResolutionError::IncompatibleWord {
+                                    ident: ident.clone(),
+                                    input_sig: sig.clone(),
+                                }))
+                            } else {
+                                Err(node.span.sp(ResolutionError::UnknownWord(ident.clone())))
+                            };
+                        } else if matching_idents.len() > 1 {
+                            return Err(node.span.sp(ResolutionError::MultipleMatchingWords {
                                 ident: ident.clone(),
-                                input_sig: sig.clone(),
-                            }))
-                        } else {
-                            Err(node.span.sp(ResolutionError::UnknownWord(ident.clone())))
-                        };
+                            }));
+                        }
+                        matching_idents[0].0
+                    } else if let Some(hash) =
+                        defs.words.by_ident(ident).next().map(|(hash, _)| hash)
+                    {
+                        hash
+                    } else {
+                        return Err(node.span.sp(ResolutionError::UnknownWord(ident.clone())));
                     };
+                    let hash = node.span.sp(hash);
                     let word = defs
                         .words
                         .by_hash(&hash)
@@ -113,7 +118,11 @@ pub fn resolve_sequence(
     }
     // Test the final signature against the given one
     let sig = sig
-        .map(|sig| sig.data)
+        .map(|mut sig| {
+            final_prepend.append(&mut sig.data.before);
+            sig.data.before = final_prepend;
+            sig.data
+        })
         .unwrap_or_else(|| Signature::new(vec![], vec![]));
     if let Some(given) = given_sig {
         if !given.is_equivalent_to(&sig) {
@@ -208,8 +217,8 @@ pub fn resolve_prim(
 #[derive(Debug, thiserror::Error)]
 pub enum ResolutionError {
     #[error(
-        "{ident} expects a before state ({}),\n\
-        but the words before it have an after state of ({})",
+        "{ident} expects a before state ( {} ),\n\
+        but the words before it have an after state of ( {} )",
         format_state(&output.before),
         format_state(&input.after)
     )]
@@ -224,7 +233,7 @@ pub enum ResolutionError {
     UnknownType(Ident),
     #[error(
         "Incompatible word \"{ident}\"\n\
-        \"{ident}\" exists, but no versions of it are compatible with the before state ({})",
+        \"{ident}\" exists, but no versions of it are compatible with the before state ( {} )",
         format_state(&input_sig.after)
     )]
     IncompatibleWord { ident: Ident, input_sig: Signature },
@@ -240,6 +249,8 @@ pub enum ResolutionError {
         expected: Signature,
         found: Signature,
     },
+    #[error("There are multiple words in scope that match the name \"{ident}\"")]
+    MultipleMatchingWords { ident: Ident },
 }
 
 fn format_state(types: &[Type]) -> String {

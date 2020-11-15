@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     convert::*,
     env, fs,
     io::{self, stdout, Write},
@@ -323,9 +323,9 @@ pub trait CodebaseItem:
         }
         Ok(names)
     }
-    fn get_entries(top_dir: &Path) -> Result<HashMap<Hash, ItemEntry<Self>>, CodebaseError> {
+    fn get_entries(top_dir: &Path) -> Result<BTreeMap<Hash, ItemEntry<Self>>, CodebaseError> {
         let folder = top_dir.join(Self::FOLDER);
-        let mut entries = HashMap::new();
+        let mut entries = BTreeMap::new();
         if !folder.exists() {
             return Ok(entries);
         }
@@ -387,13 +387,13 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct NameIndex<T>(
-    HashMap<Ident, BTreeSet<Hash>>,
+    BTreeMap<Ident, BTreeSet<Hash>>,
     #[serde(skip)] std::marker::PhantomData<T>,
 );
 
 impl<T> Default for NameIndex<T> {
     fn default() -> Self {
-        NameIndex(HashMap::new(), std::marker::PhantomData)
+        NameIndex(BTreeMap::new(), std::marker::PhantomData)
     }
 }
 
@@ -424,9 +424,9 @@ pub struct ItemDefs<T> {
     top_dir: Arc<PathBuf>,
     uses: Uses,
     names: NameIndex<T>,
-    hashes: HashMap<Ident, BTreeSet<Hash>>,
-    items: HashMap<Hash, ItemEntry<T>>,
-    tracker: HashMap<usize, Hash>,
+    hashes: BTreeMap<Ident, BTreeSet<Hash>>,
+    items: BTreeMap<Hash, ItemEntry<T>>,
+    tracker: BTreeMap<usize, Hash>,
 }
 
 impl<T> ItemDefs<T>
@@ -438,9 +438,9 @@ where
             top_dir: top_dir.clone(),
             uses: uses.clone(),
             names: NameIndex::load(top_dir)?,
-            hashes: HashMap::new(),
-            items: HashMap::new(),
-            tracker: HashMap::new(),
+            hashes: BTreeMap::new(),
+            items: BTreeMap::new(),
+            tracker: BTreeMap::new(),
         })
     }
     pub fn update_names(&mut self) -> Result<(), CodebaseError> {
