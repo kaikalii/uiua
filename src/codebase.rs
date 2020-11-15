@@ -105,13 +105,6 @@ impl CodeBase {
         );
         Ok(comp)
     }
-    pub fn dir(&self) -> PathBuf {
-        self.path
-            .lock()
-            .unwrap()
-            .iter()
-            .fold((*self.top_dir).clone(), |acc, path| acc.join(path))
-    }
     pub fn print_path_prompt(&self) {
         print!(
             "{}{} ",
@@ -226,7 +219,7 @@ where
             .flatten()
             .cloned()
     }
-    pub fn idents_by_hash(&self, hash: &Hash) -> Option<&BTreeSet<Ident>> {
+    pub fn _idents_by_hash(&self, hash: &Hash) -> Option<&BTreeSet<Ident>> {
         self.items.get(hash).map(|entry| &entry.names)
     }
     pub fn by_ident<'a>(&'a self, ident: &'a Ident) -> impl Iterator<Item = (Hash, T)> + 'a {

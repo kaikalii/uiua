@@ -47,11 +47,6 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub enum Item {
-    Word(Word),
-}
-
-#[derive(Debug, Clone)]
 pub struct Word {
     pub sig: Signature,
     pub kind: WordKind,

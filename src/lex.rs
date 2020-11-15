@@ -31,13 +31,6 @@ pub enum TT {
 }
 
 impl TT {
-    pub fn text(self) -> Option<String> {
-        if let TT::Text(s) = self {
-            Some(s)
-        } else {
-            None
-        }
-    }
     pub fn ident(self) -> Option<String> {
         if let TT::Ident(s) = self {
             Some(s)
