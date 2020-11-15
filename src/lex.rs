@@ -24,7 +24,6 @@ pub enum TT {
     DoubleDash,
     Colon,
     SemiColon,
-    Tilde,
     Period,
     Equals,
     Data,
@@ -70,7 +69,6 @@ impl fmt::Display for TT {
             TT::DoubleDash => "--".fmt(f),
             TT::Colon => ":".fmt(f),
             TT::SemiColon => ";".fmt(f),
-            TT::Tilde => "~".fmt(f),
             TT::Period => ".".fmt(f),
             TT::Equals => "=".fmt(f),
             TT::Data => "data".fmt(f),
@@ -261,7 +259,6 @@ where
             }
             ':' => TT::Colon,
             ';' => TT::SemiColon,
-            '~' => TT::Tilde,
             '.' => TT::Period,
             '=' => TT::Equals,
             c if c.is_whitespace() => return self.next_token(),

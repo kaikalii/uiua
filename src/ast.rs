@@ -84,16 +84,6 @@ pub struct Word {
     pub kind: WordKind,
 }
 
-impl Word {
-    pub fn appears_in_codebase(&self) -> bool {
-        true
-        // match self.kind {
-        //     WordKind::Uiua(_) => true,
-        //     WordKind::Builtin(_) => false,
-        // }
-    }
-}
-
 impl TreeHash for Word {
     fn hash_finish(&self) -> Hash {
         if let WordKind::Uiua(nodes) = &self.kind {

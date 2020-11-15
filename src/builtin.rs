@@ -1,11 +1,11 @@
-use std::{iter::once, mem};
+use std::mem;
 
 use serde::*;
 use sha3::*;
 
 use crate::{ast::*, types::*};
 
-pub static PRELUDE: &[&str] = &["stack", "list", "math", "quote"];
+pub static PRELUDE: &[&str] = &["stack", "list", "math", "control"];
 
 macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
@@ -15,10 +15,7 @@ macro_rules! builtin_words {
                 $(#[$doc])*
                 $name,
             )*
-            /// Call a quotation
-            Call(u8, u8),
-            /// An if statement
-            If(u8, u8),
+            Call(u8, u8)
         }
         impl BuiltinWord {
             pub const ALL_SIMPLE: &'static [BuiltinWord] = &[$(BuiltinWord::$name),*];
@@ -27,6 +24,8 @@ macro_rules! builtin_words {
 }
 
 builtin_words!(
+    /// If
+    If,
     /// Duplicate
     Dup,
     /// Make a list
@@ -58,6 +57,7 @@ fn b() -> Type {
 impl BuiltinWord {
     pub fn sig(&self) -> Signature {
         let (before, after) = match self {
+            BuiltinWord::If => (vec![Primitive::Bool.into(), a(), a()], vec![a()]),
             BuiltinWord::Dup => (vec![a()], vec![a(); 2]),
             BuiltinWord::List => (vec![], vec![generic_list()]),
             BuiltinWord::App => (vec![generic_list(), a()], vec![generic_list()]),
@@ -65,48 +65,25 @@ impl BuiltinWord {
             BuiltinWord::Pop => (vec![a()], vec![]),
             BuiltinWord::Call(before, after) => {
                 let mut params = DefaultParams::default();
-                let before: Vec<_> = params.by_ref().take(*before as usize).collect();
+                let mut before: Vec<_> = params.by_ref().take(*before as usize).collect();
                 let after: Vec<_> = params.by_ref().take(*after as usize).collect();
-                let inner = Signature::new(before.clone(), after.clone());
-                (
-                    before
-                        .into_iter()
-                        .chain(once(Primitive::Quotation(inner).into()))
-                        .collect(),
-                    after,
-                )
-            }
-            BuiltinWord::If(before, after) => {
-                let mut params = DefaultParams::default();
-                let before: Vec<_> = params.by_ref().take(*before as usize).collect();
-                let after: Vec<_> = params.by_ref().take(*after as usize).collect();
-                let inner = Signature::new(before.clone(), after.clone());
-                (
-                    before
-                        .into_iter()
-                        .chain(once(Primitive::Bool.into()))
-                        .chain(once(Primitive::Quotation(inner.clone()).into()))
-                        .chain(once(Primitive::Quotation(inner).into()))
-                        .collect(),
-                    after,
-                )
+                before.push(
+                    Primitive::Quotation(Signature::new(before.clone(), after.clone())).into(),
+                );
+                (before, after)
             }
         };
         Signature::new(before, after)
     }
     pub fn ident(&self) -> Ident {
         match self {
+            BuiltinWord::If => Ident::module("control", "?"),
+            BuiltinWord::Call(..) => Ident::module("control", "!"),
             BuiltinWord::Dup => Ident::module("stack", "dup"),
             BuiltinWord::List => Ident::module("list", "list"),
             BuiltinWord::App => Ident::module("list", "|<"),
             BuiltinWord::Swap => Ident::module("stack", "swap"),
             BuiltinWord::Pop => Ident::module("stack", "pop"),
-            BuiltinWord::Call(before, after) => {
-                Ident::module("quote".into(), format!("!{}--{}", before, after))
-            }
-            BuiltinWord::If(before, after) => {
-                Ident::module("quote".into(), format!("?{}--{}", before, after))
-            }
         }
     }
 }

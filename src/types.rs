@@ -391,7 +391,8 @@ impl Signature {
         a.before == b.before && a.after == b.after
     }
     pub fn imagine_input_sig(&self) -> Self {
-        Signature::new(Vec::new(), self.before.clone())
+        let after = self.before.clone();
+        Signature::new(Vec::new(), after)
     }
 }
 

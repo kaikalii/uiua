@@ -1,6 +1,6 @@
 use itertools::*;
 
-use crate::{ast::*, builtin::*, codebase::*, span::*, types::*};
+use crate::{ast::*, codebase::*, span::*, types::*};
 
 pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &mut Defs) -> SpResult<Word, ResolutionError> {
     let given_sig = if let Some(sig) = &word.sig {
@@ -9,7 +9,7 @@ pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &mut Defs) -> SpResult<Word
         None
     };
     let given_sig = given_sig.as_ref();
-    let (nodes, sig) = resolve_sequence(&word.nodes, defs, &word.name, given_sig.map(Sp::as_ref))?;
+    let (nodes, sig) = resolve_sequence(&word.nodes, defs, &word.name, given_sig)?;
     Ok(Word {
         sig,
         kind: WordKind::Uiua(nodes.into_iter().map(|n| n.data).collect()),
@@ -20,7 +20,7 @@ pub fn resolve_sequence(
     nodes: &[Sp<UnresolvedNode>],
     defs: &mut Defs,
     name: &Sp<String>,
-    given_sig: Option<Sp<&Signature>>,
+    given_sig: Option<&Sp<Signature>>,
 ) -> SpResult<(Vec<Sp<Node>>, Signature), ResolutionError> {
     let mut resolved_nodes = Vec::new();
     let mut sig: Option<Sp<Signature>> = None;
@@ -41,7 +41,7 @@ pub fn resolve_sequence(
             UnresolvedNode::Ident(ident) => {
                 if ident.single_and_eq(&name.data) {
                     // Self-identifier
-                    let node_sig = given_sig.map(|sig| sig.cloned()).ok_or_else(|| {
+                    let node_sig = given_sig.cloned().ok_or_else(|| {
                         name.clone()
                             .map(Ident::no_module)
                             .map(ResolutionError::RecursiveNoSignature)
@@ -66,20 +66,6 @@ pub fn resolve_sequence(
                     let matching_idents = defs.words.by_ident(ident).count();
                     let hash = if let Some(hash) = hash {
                         node.span.sp(hash)
-                    } else if ident.single_and_eq("?") {
-                        // Ifs
-                        if let Some(sig) = &sig {
-                            resolve_magic(defs, BuiltinWord::If, node.span, &sig)?
-                        } else {
-                            return Err(node.span.sp(ResolutionError::IfAtStart));
-                        }
-                    } else if ident.single_and_eq("!") {
-                        // Calls
-                        if let Some(sig) = &sig {
-                            resolve_magic(defs, BuiltinWord::Call, node.span, &sig)?
-                        } else {
-                            return Err(node.span.sp(ResolutionError::CallAtStart));
-                        }
                     } else if matching_idents == 0 {
                         return Err(node.span.sp(ResolutionError::UnknownWord(ident.clone())));
                     } else {
@@ -141,31 +127,6 @@ pub fn resolve_sequence(
     // Always use the given signature if it exists
     let sig = given_sig.map(|sig| sig.data.clone()).unwrap_or(sig);
     Ok((resolved_nodes, sig))
-}
-
-fn resolve_magic<F>(
-    defs: &mut Defs,
-    handler: F,
-    span: Span,
-    sig: &Sp<Signature>,
-) -> SpResult<Sp<Hash>, ResolutionError>
-where
-    F: Fn(u8, u8) -> BuiltinWord,
-{
-    if let Some(last) = sig.after.last() {
-        if let Type::Prim(Primitive::Quotation(sig)) = last {
-            let builtin = handler(sig.before.len() as u8, sig.after.len() as u8);
-            Ok(span.sp(defs.words.insert(builtin.ident(), builtin.into())))
-        } else {
-            Err(span.sp(ResolutionError::ExpectedQuotation {
-                found: last.clone(),
-            }))
-        }
-    } else {
-        Err(span.sp(ResolutionError::ExpectedQuotation {
-            found: Primitive::Unit.into(),
-        }))
-    }
 }
 
 pub fn resolve_sig(
@@ -279,12 +240,6 @@ pub enum ResolutionError {
         expected: Signature,
         found: Signature,
     },
-    #[error("Unenumerated calls cannot be at the beginning of a definition")]
-    CallAtStart,
-    #[error("Unenumerated if's cannot be at the beginning of a definition")]
-    IfAtStart,
-    #[error("Expected quotation, found {found}")]
-    ExpectedQuotation { found: Type },
 }
 
 fn format_state(types: &[Type]) -> String {

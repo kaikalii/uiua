@@ -36,9 +36,13 @@ impl Codebase {
         let top_dir = Arc::new(dir.as_ref().to_path_buf());
         let mut defs = Defs::new(&top_dir, None)?;
         // Words
-        for biw in BuiltinWord::ALL_SIMPLE {
+        for biw in BuiltinWord::ALL_SIMPLE.iter().cloned().chain(
+            (0..8)
+                .map(|i| (0..8).map(move |j| BuiltinWord::Call(i, j)))
+                .flatten(),
+        ) {
             let ident = biw.ident();
-            let word = Word::from(*biw);
+            let word = Word::from(biw);
             let hash = word.hash_finish();
             ItemEntry {
                 item: word,
@@ -172,13 +176,11 @@ impl Codebase {
                 // Add words
                 let mut words_added = 0;
                 for (hash, entry) in &defs.words.items {
-                    if entry.item.appears_in_codebase() {
-                        if let Err(e) = entry.save(hash, &self.top_dir) {
-                            println!("{} adding word: {}", "Error".bright_red(), e);
-                            failures += 1;
-                        } else {
-                            words_added += 1;
-                        }
+                    if let Err(e) = entry.save(hash, &self.top_dir) {
+                        println!("{} adding word: {}", "Error".bright_red(), e);
+                        failures += 1;
+                    } else {
+                        words_added += 1;
                     }
                 }
                 // Report
@@ -536,24 +538,22 @@ impl Compilation {
             // Words
             let codebase_words = Word::get_entries(&defs.words.top_dir)?;
             for (hash, new_entry) in &defs.words.items {
-                if new_entry.item.appears_in_codebase() {
-                    let message = if let Some(cb_entry) = codebase_words.get(hash) {
-                        if new_entry.names.intersection(&cb_entry.names).count() == 0 {
-                            format!("as alias for {}", cb_entry.format_names())
-                        } else {
-                            "no change".bright_black().to_string()
-                        }
+                let message = if let Some(cb_entry) = codebase_words.get(hash) {
+                    if new_entry.names.intersection(&cb_entry.names).count() == 0 {
+                        format!("as alias for {}", cb_entry.format_names())
                     } else {
-                        "and ready to be added".into()
-                    };
-                    println!(
-                        "{} {} {} {}",
-                        new_entry.format_names(),
-                        new_entry.item.sig,
-                        "OK".bright_green(),
-                        message
-                    );
-                }
+                        "no change".bright_black().to_string()
+                    }
+                } else {
+                    "and ready to be added".into()
+                };
+                println!(
+                    "{} {} {} {}",
+                    new_entry.format_names(),
+                    new_entry.item.sig,
+                    "OK".bright_green(),
+                    message
+                );
             }
         } else {
             self.print_errors();
