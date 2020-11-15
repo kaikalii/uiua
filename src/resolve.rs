@@ -58,8 +58,8 @@ pub fn resolve_sequence(
                     let hash = if let Some(sig) = &sig_for_lookup {
                         defs.words
                             .by_ident_matching_sig(ident, &sig)
-                            .next()
-                            .map(|(hash, _)| hash)
+                            .first()
+                            .map(|(hash, _)| *hash)
                     } else {
                         defs.words.by_ident(ident).next().map(|(hash, _)| hash)
                     };

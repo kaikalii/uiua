@@ -37,8 +37,8 @@ impl Codebase {
         let mut defs = Defs::new(&top_dir, None)?;
         // Words
         for biw in BuiltinWord::ALL_SIMPLE.iter().cloned().chain(
-            (0..8)
-                .map(|i| (0..8).map(move |j| BuiltinWord::Call(i, j)))
+            (0..5)
+                .map(|i| (0..5).map(move |j| BuiltinWord::Call(i, j)))
                 .flatten(),
         ) {
             let ident = biw.ident();
@@ -236,7 +236,7 @@ impl Codebase {
         defs.words.tracker.clear();
         for (ident, sig, hash) in word_data {
             println!(
-                "{}. {:pad$} {}",
+                "{:>3}. {:pad$} {}",
                 track_i,
                 format!(
                     "{}{}",
@@ -448,40 +448,35 @@ where
         self.names.save(&self.top_dir)?;
         Ok(())
     }
-    pub fn hashes_by_ident<'a>(&'a self, ident: &'a Ident) -> impl Iterator<Item = Hash> + 'a {
-        once(ident.clone())
-            .chain(
-                if ident.module.is_some() {
-                    BTreeSet::new().into_iter()
-                } else {
-                    self.uses.lock().unwrap().clone().into_iter()
+    pub fn hashes_by_ident(&self, ident: &Ident) -> Vec<Hash> {
+        let mut ident_hashes = Vec::new();
+        for ident in once(ident.clone()).chain(
+            if ident.module.is_some() {
+                BTreeSet::new().into_iter()
+            } else {
+                self.uses.lock().unwrap().clone().into_iter()
+            }
+            .map(move |module| Ident::module(&module, &ident.name)),
+        ) {
+            if let Some(hashes) = self.hashes.get(&ident) {
+                ident_hashes.extend(hashes.clone());
+            }
+            if let Ok(entries) = T::get_entries(&self.top_dir) {
+                for (hash, entry) in entries {
+                    if entry.names.contains(&ident) {
+                        ident_hashes.push(hash);
+                    }
                 }
-                .map(move |module| Ident::module(&module, &ident.name)),
-            )
-            .flat_map(move |ident| {
-                self.hashes
-                    .get(&ident)
-                    .cloned()
-                    .into_iter()
-                    .flatten()
-                    .chain(
-                        T::get_names(&self.top_dir)
-                            .ok()
-                            .into_iter()
-                            .flat_map(move |names| {
-                                names.0.get(&ident).cloned().into_iter().flatten()
-                            }),
-                    )
-            })
+            }
+        }
+        ident_hashes
     }
     pub fn _idents_by_hash(&self, hash: &Hash) -> Option<BTreeSet<Ident>> {
         self.items.get(hash).map(|entry| entry.names.clone())
     }
-    pub fn by_ident<'a>(
-        &'a self,
-        ident: &'a Ident,
-    ) -> impl Iterator<Item = (Hash, ItemEntry<T>)> + 'a {
+    pub fn by_ident(&self, ident: &Ident) -> impl Iterator<Item = (Hash, ItemEntry<T>)> + '_ {
         self.hashes_by_ident(ident)
+            .into_iter()
             .filter_map(move |hash| self.by_hash(&hash).map(|item| (hash, item)))
     }
     pub fn by_hash(&self, hash: &Hash) -> Option<ItemEntry<T>> {
@@ -506,14 +501,11 @@ where
 }
 
 impl ItemDefs<Word> {
-    pub fn by_ident_matching_sig<'a>(
-        &'a self,
-        ident: &'a Ident,
-        sig: &'a Signature,
-    ) -> impl Iterator<Item = (Hash, Word)> + 'a {
+    pub fn by_ident_matching_sig(&self, ident: &Ident, sig: &Signature) -> Vec<(Hash, Word)> {
         self.by_ident(ident)
             .filter(move |(_, entry)| sig.compose(&entry.item.sig).is_ok())
             .map(|(hash, entry)| (hash, entry.item))
+            .collect()
     }
 }
 

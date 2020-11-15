@@ -504,20 +504,39 @@ impl TypeResolver {
     }
 }
 
+static SIG_COLORS: &[Color] = &[Color::Cyan, Color::Green, Color::Yellow];
+
+fn format_ty(ty: &Type, s: &mut String, i: usize) {
+    match ty {
+        Type::Prim(Primitive::Quotation(sig)) => sig.format(s, i),
+        _ => s.push_str(&ty.to_string()),
+    }
+}
+
+impl Signature {
+    fn format(&self, s: &mut String, i: usize) {
+        s.push_str(&"( ".color(SIG_COLORS[i % SIG_COLORS.len()]).to_string());
+        for ty in &self.before {
+            format_ty(ty, s, i + 1);
+            s.push(' ');
+        }
+        s.push_str(&"-- ".bright_black().to_string());
+        for ty in &self.after {
+            format_ty(ty, s, i + 1);
+            s.push(' ');
+        }
+        s.push_str(&")".color(SIG_COLORS[i % SIG_COLORS.len()]).to_string())
+    }
+}
+
 impl fmt::Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for param in &self.params() {
             write!(f, "{} ", param.name)?;
         }
-        write!(f, "{}", "( ".bright_black())?;
-        for ty in &self.before {
-            write!(f, "{} ", ty)?;
-        }
-        write!(f, "{}", "-- ".bright_black())?;
-        for ty in &self.after {
-            write!(f, "{} ", ty)?;
-        }
-        write!(f, "{}", ")".bright_black())
+        let mut s = String::new();
+        self.format(&mut s, 0);
+        write!(f, "{}", s)
     }
 }
 
