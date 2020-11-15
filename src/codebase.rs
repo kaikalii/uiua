@@ -19,7 +19,7 @@ use crate::{ast::*, builtin::*, parse::*, resolve::*, span::*, types::*};
 #[derive(Clone)]
 pub struct CodeBase {
     top_dir: Arc<PathBuf>,
-    path: Arc<Mutex<Vec<String>>>,
+    path: Arc<Mutex<Option<String>>>,
     pub defs: Arc<Mutex<Defs>>,
 }
 
@@ -32,7 +32,7 @@ impl CodeBase {
         let cb = CodeBase {
             top_dir: Arc::new(dir.as_ref().to_path_buf()),
             path: Default::default(),
-            defs: Default::default(),
+            defs: Arc::new(Mutex::new(Defs::new(None))),
         };
         let cb_clone = cb.clone();
         // Spawn watcher thread
@@ -61,7 +61,7 @@ impl CodeBase {
     }
     fn handle_file_change(&self, path: &Path) -> Result<Compilation, Box<dyn Error>> {
         let mut defs = self.defs.lock().unwrap();
-        *defs = Defs::default();
+        *defs = Defs::new(self.path.lock().unwrap().clone());
         let path = path.to_path_buf();
         let buffer = fs::read(&path)?;
         let mut comp = Compilation {
@@ -83,8 +83,10 @@ impl CodeBase {
                 .filter_map(|(unresolved, _)| match &unresolved {
                     UnresolvedItem::Word(uw) => match resolve_word(&uw, &mut defs) {
                         Ok(word) => {
-                            defs.words
-                                .insert(Ident::no_module(uw.name.data.clone()), word);
+                            defs.words.insert(
+                                Ident::new(self.path.lock().unwrap().clone(), uw.name.data.clone()),
+                                word,
+                            );
                             None
                         }
                         Err(e) => Some((unresolved, Some(e))),
@@ -111,28 +113,24 @@ impl CodeBase {
             .fold((*self.top_dir).clone(), |acc, path| acc.join(path))
     }
     pub fn print_path_prompt(&self) {
-        print!(".");
-        for (i, path) in self.path.lock().unwrap().iter().enumerate() {
-            print!("{}{}", if i == 0 { "" } else { "." }, path);
-        }
-        print!("{} ", ">".bright_yellow());
+        print!(
+            "{}{} ",
+            if let Some(path) = &*self.path.lock().unwrap() {
+                path
+            } else {
+                ""
+            }
+            .bright_yellow(),
+            ">".bright_yellow()
+        );
         let _ = stdout().flush();
     }
-    pub fn cd(&self, rel_path: &str) -> Result<(), CodeBaseError> {
+    pub fn cd(&self, new_path: &str) {
         let mut path = self.path.lock().unwrap();
-        if rel_path.starts_with('.') && !rel_path.starts_with("..") {
-            path.clear();
+        match new_path {
+            "." | ".." => *path = None,
+            s => *path = Some(s.into()),
         }
-        for name in rel_path.split('/').filter(|s| !s.is_empty()) {
-            match name {
-                "." => {}
-                ".." => {
-                    path.pop();
-                }
-                name => path.push(name.into()),
-            }
-        }
-        Ok(())
     }
 }
 
@@ -156,7 +154,7 @@ pub enum CodeBaseError {
     Notify(#[from] notify::Error),
 }
 
-pub type Uses = Arc<Mutex<Vec<String>>>;
+pub type Uses = Arc<Mutex<BTreeSet<String>>>;
 
 #[derive(Debug)]
 pub struct Defs {
@@ -165,10 +163,15 @@ pub struct Defs {
     pub types: ItemDefs<Type>,
 }
 
-impl Default for Defs {
-    fn default() -> Self {
+impl Defs {
+    pub fn new(path: Option<String>) -> Self {
         let uses = Arc::new(Mutex::new(
-            PRELUDE.iter().copied().map(Into::into).collect(),
+            PRELUDE
+                .iter()
+                .copied()
+                .map(Into::into)
+                .chain(path)
+                .collect(),
         ));
         let mut defs = Defs {
             words: ItemDefs::new(&uses),
@@ -213,7 +216,7 @@ where
         once(ident.clone())
             .chain(
                 if ident.module.is_some() {
-                    Vec::new().into_iter()
+                    BTreeSet::new().into_iter()
                 } else {
                     self.uses.lock().unwrap().clone().into_iter()
                 }

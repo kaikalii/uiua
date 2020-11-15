@@ -56,11 +56,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let args = iter::once("uiua").chain(line.split_whitespace());
         match Command::from_iter_safe(args) {
             Ok(com) => match com {
-                Command::Cd { path } => {
-                    if let Err(e) = cb.cd(&path) {
-                        println!("{}", e);
-                    }
-                }
+                Command::Cd { path } => cb.cd(&path),
                 Command::Exit => break,
             },
             Err(e) => println!("{}", e),
