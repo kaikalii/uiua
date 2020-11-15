@@ -118,7 +118,9 @@ pub fn resolve_sequence(
                         panic!("quotation composition failed")
                     );
                 }
-                resolved_nodes.push(node.span.sp(Node::Quotation(sub_nodes)));
+                resolved_nodes.push(node.span.sp(Node::Quotation(
+                    sub_nodes.into_iter().map(|node| node.data).collect(),
+                )));
             }
         }
     }

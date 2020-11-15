@@ -1,5 +1,6 @@
-use std::{fmt, mem};
+use std::{convert::*, fmt, mem};
 
+use serde::*;
 use sha3::*;
 
 use crate::{builtin::*, span::*, types::*};
@@ -7,7 +8,8 @@ use crate::{builtin::*, span::*, types::*};
 type HashInner =
     digest::generic_array::GenericArray<u8, digest::generic_array::typenum::consts::U32>;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct Hash(pub HashInner);
 
 impl fmt::Debug for Hash {
@@ -25,6 +27,35 @@ impl fmt::Display for Hash {
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {
         self.0.as_ref()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum HashDecodeError {
+    #[error("Error decoding hash {0}")]
+    HexDecode(#[from] hex::FromHexError),
+    #[error("Decoded hash is incorrect length")]
+    IncorrectLength,
+}
+
+impl TryFrom<String> for Hash {
+    type Error = HashDecodeError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        let bytes = hex::decode(&s)?;
+        if bytes.len() != 32 {
+            return Err(HashDecodeError::IncorrectLength);
+        }
+        let mut inner = HashInner::default();
+        for (i, j) in inner.iter_mut().zip(bytes) {
+            *i = j;
+        }
+        Ok(Hash(inner))
+    }
+}
+
+impl From<Hash> for String {
+    fn from(hash: Hash) -> Self {
+        hex::encode(hash)
     }
 }
 
@@ -46,7 +77,12 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Item {
+    Word(Word),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Word {
     pub sig: Signature,
     pub kind: WordKind,
@@ -85,17 +121,17 @@ impl From<BuiltinWord> for Word {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WordKind {
     Uiua(Vec<Node>),
     Builtin(BuiltinWord),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Node {
     Ident(Hash),
     SelfIdent,
-    Quotation(Vec<Sp<Node>>),
+    Quotation(Vec<Node>),
     Literal(Literal),
 }
 
@@ -179,7 +215,7 @@ pub enum UnresolvedNode {
     Literal(Literal),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Literal {
     Bool(bool),
     Nat(u64),

@@ -4,11 +4,12 @@ use std::{
     fmt, mem,
 };
 
+use serde::*;
 use sha3::*;
 
 use crate::{ast::*, resolve::ResolutionError, span::*};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Type {
     Prim(Primitive),
     Generic(Generic),
@@ -114,7 +115,7 @@ impl fmt::Display for Type {
     }
 }
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct Generic {
     pub name: String,
     pub index: u8,
@@ -149,7 +150,7 @@ impl Ord for Generic {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Primitive<T = Type> {
     Unit,
     Bool,
@@ -197,7 +198,7 @@ impl fmt::Display for Primitive {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signature<T = Type> {
     pub before: Vec<T>,
     pub after: Vec<T>,

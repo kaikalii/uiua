@@ -1,5 +1,6 @@
 use std::{iter::once, mem};
 
+use serde::*;
 use sha3::*;
 
 use crate::{ast::*, types::*};
@@ -8,7 +9,7 @@ pub static PRELUDE: &[&str] = &["stack", "list", "math", "quote"];
 
 macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
         pub enum BuiltinWord {
             $(
                 $(#[$doc])*
