@@ -23,8 +23,6 @@ pub enum TT {
     CloseParen,
     DoubleDash,
     Colon,
-    SemiColon,
-    Period,
     Equals,
     Data,
 }
@@ -68,8 +66,6 @@ impl fmt::Display for TT {
             TT::CloseParen => ")".fmt(f),
             TT::DoubleDash => "--".fmt(f),
             TT::Colon => ":".fmt(f),
-            TT::SemiColon => ";".fmt(f),
-            TT::Period => ".".fmt(f),
             TT::Equals => "=".fmt(f),
             TT::Data => "data".fmt(f),
         }
@@ -258,8 +254,6 @@ where
                 TT::CloseParen
             }
             ':' => TT::Colon,
-            ';' => TT::SemiColon,
-            '.' => TT::Period,
             '=' => TT::Equals,
             c if c.is_whitespace() => return self.next_token(),
             // Idents and others
@@ -341,5 +335,5 @@ fn escaped_char(c: char) -> Result<char, LexErrorKind> {
 }
 
 fn ident_char(c: char) -> bool {
-    c > ' ' && c as u32 != 127 && !".[]{}()".contains(c)
+    c > ' ' && c as u32 != 127 && !"[]{}()".contains(c)
 }

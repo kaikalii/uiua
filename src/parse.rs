@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::{convert::*, io::Read};
 
 use crate::{ast::*, lex::*, span::*, types::*};
 
@@ -12,6 +12,8 @@ pub enum ParseErrorKind {
     ExpectedFound { expected: String, found: TT },
     #[error("Expected signature because of type parameters")]
     ExpectedSignature,
+    #[error("{0}")]
+    IdentParse(#[from] IdentParseError),
 }
 
 impl ParseErrorKind {
@@ -76,13 +78,13 @@ impl Parser {
     }
     /// Match an identifier
     fn ident(&mut self) -> Result<Option<Sp<Ident>>, ParseError> {
-        Ok(if let Some(first) = self.try_mat(TT::ident) {
-            Some(if self.try_mat(TT::Period).is_some() {
-                let second = self.mat("identifier", TT::ident)?;
-                (first.span - second.span).sp(Ident::new(Some(first.data), second.data))
-            } else {
-                first.map(|s| Ident::new(None, s))
-            })
+        Ok(if let Some(s) = self.try_mat(TT::ident) {
+            let span = s.span;
+            Some(
+                span.sp(Ident::try_from(s.data)
+                    .map_err(ParseErrorKind::from)
+                    .map_err(|e| e.span(span))?),
+            )
         } else {
             None
         })
@@ -198,8 +200,6 @@ impl Parser {
         self.mat('=', TT::Equals)?;
         // Match the nodes
         let nodes = self.seq()?;
-        // Match the closing semicolon
-        self.try_mat(TT::SemiColon);
         let end = self.loc;
         Ok(Span::new(start, end).sp(UnresolvedWord {
             name,
