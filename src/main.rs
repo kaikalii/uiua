@@ -2,7 +2,6 @@ mod ast;
 mod builtin;
 mod codebase;
 mod lex;
-mod num;
 mod parse;
 mod resolve;
 mod span;
