@@ -95,7 +95,8 @@ pub fn resolve_sequence(
                     let word = defs
                         .words
                         .by_hash(&hash)
-                        .expect("word that was already found isn't present");
+                        .expect("word that was already found isn't present")
+                        .item;
                     compose!(node.span.sp(word.sig.clone()), ident.to_string());
                     resolved_nodes.push(hash.map(Node::Ident));
                 }
@@ -214,7 +215,7 @@ fn resolve_concrete_type(
         UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
         UnresolvedType::Ident(name) => {
             if let Some((_, ty)) = defs.types.by_ident(name).next() {
-                Ok(ty)
+                Ok(ty.item)
             } else {
                 Err(ty.span.sp(ResolutionError::UnknownType(name.clone())))
             }

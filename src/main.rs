@@ -43,7 +43,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     });
     // Init codebase
     let cb_path = app.codebase.unwrap_or_else(|| PathBuf::from("."));
-    let cb = CodeBase::open(cb_path)?;
+    let cb = Codebase::open(cb_path)?;
     cb.print_path_prompt();
     // Command loop
     for line in recv {
@@ -54,6 +54,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let args = iter::once("uiua").chain(line.split_whitespace());
         match Command::from_iter_safe(args) {
             Ok(com) => match com {
+                Command::Add => cb.add(),
                 Command::Cd { path } => cb.cd(&path),
                 Command::Exit => break,
             },
@@ -66,6 +67,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
 #[derive(StructOpt)]
 enum Command {
+    Add,
     Cd { path: String },
     Exit,
 }

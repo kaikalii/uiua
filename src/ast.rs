@@ -78,26 +78,35 @@ where
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Item {
-    Word(Word),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Word {
     pub sig: Signature,
+    #[serde(rename = "body")]
     pub kind: WordKind,
 }
 
 impl Word {
     pub fn appears_in_codebase(&self) -> bool {
-        match self.kind {
-            WordKind::Uiua(_) => true,
-            WordKind::Builtin(_) => false,
-        }
+        true
+        // match self.kind {
+        //     WordKind::Uiua(_) => true,
+        //     WordKind::Builtin(_) => false,
+        // }
     }
 }
 
 impl TreeHash for Word {
+    fn hash_finish(&self) -> Hash {
+        if let WordKind::Uiua(nodes) = &self.kind {
+            if nodes.len() == 1 {
+                if let Node::Ident(hash) = nodes.first().unwrap() {
+                    return *hash;
+                }
+            }
+        }
+        let mut sha = Sha3_256::default();
+        self.hash(&mut sha);
+        Hash(sha.finalize())
+    }
     fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(&self.kind)) });
         self.sig.hash(sha);
@@ -122,12 +131,14 @@ impl From<BuiltinWord> for Word {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum WordKind {
     Uiua(Vec<Node>),
     Builtin(BuiltinWord),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Node {
     Ident(Hash),
     SelfIdent,
@@ -164,7 +175,8 @@ pub struct UnresolvedWord {
     pub nodes: Vec<Sp<UnresolvedNode>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct Ident {
     pub module: Option<String>,
     pub name: String,
@@ -205,6 +217,34 @@ impl fmt::Display for Ident {
         } else {
             self.name.fmt(f)
         }
+    }
+}
+
+impl From<Ident> for String {
+    fn from(ident: Ident) -> Self {
+        ident.to_string()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Error parsing ident")]
+pub struct IdentParseError;
+
+impl TryFrom<String> for Ident {
+    type Error = IdentParseError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        if s.chars().filter(|c| c == &'.').count() > 1 {
+            return Err(IdentParseError);
+        }
+        let mut iter = s.split('.');
+        let first = iter.next().ok_or(IdentParseError)?;
+        let second = iter.next();
+        let ident = if let Some(second) = second {
+            Ident::module(first, second)
+        } else {
+            Ident::no_module(first)
+        };
+        Ok(ident)
     }
 }
 

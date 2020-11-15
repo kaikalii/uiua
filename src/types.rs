@@ -10,6 +10,7 @@ use sha3::*;
 use crate::{ast::*, resolve::ResolutionError, span::*};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Type {
     Prim(Primitive),
     Generic(Generic),
