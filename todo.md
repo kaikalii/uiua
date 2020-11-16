@@ -1,5 +1,4 @@
 - Data
-- Figure out float/ident parsing
 - use brackets for quotation types?
 - Runtime
 - Use statements

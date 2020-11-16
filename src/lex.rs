@@ -1,8 +1,11 @@
 use std::{
+    collections::VecDeque,
     fmt,
     io::{self, Read},
     iter::Peekable,
 };
+
+use itertools::*;
 
 use crate::{ast::*, span::*};
 
@@ -22,6 +25,7 @@ pub enum TT {
     OpenParen,
     CloseParen,
     DoubleDash,
+    Period,
     Colon,
     Equals,
     Data,
@@ -68,6 +72,7 @@ impl fmt::Display for TT {
             TT::Colon => ":".fmt(f),
             TT::Equals => "=".fmt(f),
             TT::Data => "data".fmt(f),
+            TT::Period => ".".fmt(f),
         }
     }
 }
@@ -129,6 +134,7 @@ where
     R: Read,
 {
     chars: Peekable<unicode_reader::CodePoints<io::Bytes<R>>>,
+    put_back: VecDeque<io::Result<char>>,
     brackets: Vec<char>,
     loc: Loc,
     start: Loc,
@@ -143,13 +149,14 @@ where
             .unwrap_or_else(|| Err(LexErrorKind::ExpectedCharacter.span(self.start, self.loc)))
     }
     fn try_next_char(&mut self) -> Option<Result<char, LexError>> {
-        if let Some(c) = self.chars.next() {
+        if let Some(c) = self.put_back.pop_front().or_else(|| self.chars.next()) {
             match c {
                 Ok('\n') => {
                     self.loc.line += 1;
                     self.loc.col = 0;
                 }
                 Ok('\t') => self.loc.col += 4,
+                Ok('\u{0}') => return self.try_next_char(),
                 Ok(_) => self.loc.col += 1,
                 Err(_) => {}
             }
@@ -158,6 +165,10 @@ where
             self.loc.col += 1;
             None
         }
+    }
+    fn peek(&mut self) -> Option<&io::Result<char>> {
+        let chars = &mut self.chars;
+        self.put_back.front().or_else(move || chars.peek())
     }
     fn next_token(&mut self) -> Result<Option<Token>, LexError> {
         let c = if let Some(c) = self.try_next_char() {
@@ -259,7 +270,7 @@ where
             // Idents and others
             c if ident_char(c) => {
                 let mut s: String = c.into();
-                while let Some(Ok(c)) = self.chars.peek() {
+                while let Some(Ok(c)) = self.peek() {
                     let c = *c;
                     if ident_char(c) {
                         self.next_char()?;
@@ -275,16 +286,25 @@ where
                     TT::Nat(n)
                 } else if let Ok(f) = s.parse::<f64>() {
                     TT::Float(f)
+                } else if s == "." {
+                    TT::Period
+                } else if s.contains('.') {
+                    self.put_back.extend(
+                        s.split('.')
+                            .intersperse("\u{0}.\u{0}")
+                            .map(|s| s.chars())
+                            .flatten()
+                            .map(Ok),
+                    );
+                    self.loc.col = self.loc.col.saturating_sub(s.len());
+                    return self.next_token();
                 } else {
                     match s.as_str() {
                         "true" => TT::Bool(true),
                         "false" => TT::Bool(false),
                         "data" => TT::Data,
                         "--" => TT::DoubleDash,
-                        "---" => {
-                            while self.try_next_char().is_some() {}
-                            return Ok(None);
-                        }
+                        "---" => return Ok(None),
                         _ => TT::Ident(s),
                     }
                 }
@@ -313,6 +333,7 @@ where
         start: Loc::new(1, 0),
         brackets: Vec::new(),
         chars: unicode_reader::CodePoints::from(input.bytes()).peekable(),
+        put_back: VecDeque::new(),
     };
     let mut tokens = Vec::new();
     while let Some(c) = lexer.next_token()? {

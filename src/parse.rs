@@ -78,13 +78,13 @@ impl Parser {
     }
     /// Match an identifier
     fn ident(&mut self) -> Result<Option<Sp<Ident>>, ParseError> {
-        Ok(if let Some(s) = self.try_mat(TT::ident) {
-            let span = s.span;
-            Some(
-                span.sp(Ident::try_from(s.data)
-                    .map_err(ParseErrorKind::from)
-                    .map_err(|e| e.span(span))?),
-            )
+        Ok(if let Some(first) = self.try_mat(TT::ident) {
+            Some(if self.try_mat(TT::Period).is_some() {
+                let second = self.mat("name", TT::ident)?;
+                (first.span - second.span).sp(Ident::module(first.data, second.data))
+            } else {
+                first.map(Ident::no_module)
+            })
         } else {
             None
         })
