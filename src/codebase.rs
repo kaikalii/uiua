@@ -5,7 +5,7 @@ use std::{
     io::{self, stdout, Write},
     iter::*,
     path::{Path, PathBuf},
-    sync::{mpsc, Arc, Mutex, MutexGuard},
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -19,16 +19,15 @@ use sha3::*;
 
 use crate::{ast::*, builtin::*, parse::*, resolve::*, span::*, types::*};
 
-#[derive(Clone)]
 pub struct Codebase {
     top_dir: Arc<PathBuf>,
-    path: Arc<Mutex<Option<String>>>,
-    defs: Arc<Mutex<Defs>>,
-    comp: Arc<Mutex<Option<Compilation>>>,
+    path: Option<String>,
+    defs: Defs,
+    comp: Option<Compilation>,
 }
 
 impl Codebase {
-    pub fn open<P: AsRef<Path>>(dir: P) -> Result<Codebase, CodebaseError> {
+    pub fn open<P: AsRef<Path>>(dir: P) -> Result<Arc<Mutex<Codebase>>, CodebaseError> {
         fs::create_dir_all(&dir)?;
         // Set up file watcher
         let (event_send, event_recv) = mpsc::channel();
@@ -55,12 +54,12 @@ impl Codebase {
         }
         defs.words.update_names()?;
         // Make codebase
-        let cb = Codebase {
+        let cb = Arc::new(Mutex::new(Codebase {
             path: Default::default(),
-            defs: Arc::new(Mutex::new(defs)),
+            defs,
             top_dir,
             comp: Default::default(),
-        };
+        }));
         let cb_clone = cb.clone();
         // Spawn watcher thread
         thread::spawn(move || {
@@ -71,17 +70,12 @@ impl Codebase {
                     // Handle file change
                     if let Some(diff) = pathdiff::diff_paths(&path, env::current_dir().unwrap()) {
                         if is_scratch_file(&path) {
+                            let mut cb = cb.lock().unwrap();
+                            let cb = &mut *cb;
                             match cb.handle_file_change(&path) {
                                 Ok(()) => {
                                     println!();
-                                    if let Err(e) = cb
-                                        .comp
-                                        .lock()
-                                        .unwrap()
-                                        .as_ref()
-                                        .unwrap()
-                                        .print(&mut cb.defs.lock().unwrap())
-                                    {
+                                    if let Err(e) = cb.comp.as_ref().unwrap().print(&mut cb.defs) {
                                         println!("{}", e)
                                     }
                                 }
@@ -95,10 +89,8 @@ impl Codebase {
         });
         Ok(cb)
     }
-    fn handle_file_change(&self, path: &Path) -> Result<(), CodebaseError> {
-        let mut defs = self.defs();
-        defs.reset();
-        let mut old_comp = self.comp.lock().unwrap();
+    fn handle_file_change(&mut self, path: &Path) -> Result<(), CodebaseError> {
+        self.defs.reset();
         let path = path.to_path_buf();
         let buffer = fs::read(&path)?;
         let mut comp = Compilation {
@@ -111,7 +103,7 @@ impl Codebase {
             Ok(uw) => uw.into_iter().map(|ud| (ud, None)).collect(),
             Err(e) => {
                 comp.errors.push(e.span.sp(CompileError::Parse(e.kind)));
-                *old_comp = Some(comp);
+                self.comp = Some(comp);
                 return Ok(());
             }
         };
@@ -122,13 +114,13 @@ impl Codebase {
                 .into_iter()
                 .filter_map(|(unresolved, _)| match &unresolved {
                     // Words
-                    UnresolvedItem::Word(uw) => match resolve_word(&uw, &mut defs) {
+                    UnresolvedItem::Word(uw) => match resolve_word(&uw, &mut self.defs) {
                         Ok(word) => {
-                            let ident =
-                                Ident::new(self.path.lock().unwrap().clone(), uw.name.data.clone());
-                            let hash = word.hash_finish(&defs.words);
+                            let ident = Ident::new(self.path.clone(), uw.name.data.clone());
+                            let hash = word.hash_finish(&self.defs.words);
                             // Check for identical word
-                            if defs
+                            if self
+                                .defs
                                 .words
                                 .equivalent_ident_and_sig(&ident, &word.sig, Query::Pending)
                                 .any(|h| h != hash)
@@ -146,7 +138,7 @@ impl Codebase {
                                     })),
                                 ));
                             }
-                            defs.words.insert(ident, word);
+                            self.defs.words.insert(ident, word);
                             None
                         }
                         Err(e) => Some((unresolved, Some(e))),
@@ -165,16 +157,13 @@ impl Codebase {
                 .into_iter()
                 .filter_map(|(_, e)| e.map(|e| e.map(Into::into))),
         );
-        *old_comp = Some(comp);
+        self.comp = Some(comp);
         Ok(())
-    }
-    pub fn defs(&self) -> MutexGuard<Defs> {
-        self.defs.lock().unwrap()
     }
     pub fn print_path_prompt(&self) {
         print!(
             "{}{} ",
-            if let Some(path) = &*self.path.lock().unwrap() {
+            if let Some(path) = &self.path {
                 path
             } else {
                 ""
@@ -184,40 +173,40 @@ impl Codebase {
         );
         let _ = stdout().flush();
     }
-    pub fn cd(&self, new_path: &str) {
-        let mut path = self.path.lock().unwrap();
-        match new_path {
-            "." | ".." => *path = None,
-            s => *path = Some(s.into()),
-        }
+    pub fn cd(&mut self, new_path: &str) {
+        self.path = match new_path {
+            "." | ".." => None,
+            s => Some(s.into()),
+        };
     }
-    pub fn add(&self) {
+    pub fn add(&mut self) {
         println!();
-        if let Some(comp) = &*self.comp.lock().unwrap() {
+        if let Some(comp) = &self.comp {
             if comp.errors.is_empty() {
                 let mut failures = 0;
-                let mut defs = self.defs();
                 // Add words
                 let mut words_added = 0;
                 let mut hashes_to_purge = Vec::new();
-                for (hash, entry) in &defs.words.entries {
+                for (hash, entry) in &self.defs.words.entries {
                     // Handle if there is an existing word in the codebase with the same name and signature
-                    let old_to_delete =
-                        if let Some(old) = defs.words.equivalent_entry(hash, entry, Query::Saved) {
-                            hashes_to_purge.push(old);
-                            defs.words
-                                .entry_by_hash(&hash, Query::All)
-                                .unwrap()
-                                .names
-                                .clear();
-                            if defs.words.hash_is_referenced(&hash) {
-                                None
-                            } else {
-                                Some(old)
-                            }
-                        } else {
+                    let old_to_delete = if let Some(old) =
+                        self.defs.words.equivalent_entry(hash, entry, Query::Saved)
+                    {
+                        hashes_to_purge.push(old);
+                        self.defs
+                            .words
+                            .entry_by_hash(&hash, Query::All)
+                            .unwrap()
+                            .names
+                            .clear();
+                        if self.defs.words.hash_is_referenced(&hash) {
                             None
-                        };
+                        } else {
+                            Some(old)
+                        }
+                    } else {
+                        None
+                    };
                     if let Err(e) = entry.save(hash, &self.top_dir, old_to_delete) {
                         println!("{} adding word: {}", "Error".bright_red(), e);
                         failures += 1;
@@ -226,7 +215,7 @@ impl Codebase {
                     }
                 }
                 for hash in &hashes_to_purge {
-                    defs.words.names.purge_hash(hash);
+                    self.defs.words.names.purge_hash(hash);
                 }
                 // Report
                 // Added words
@@ -241,7 +230,7 @@ impl Codebase {
                         .bright_green()
                     );
                     // Update names
-                    if let Err(e) = defs.words.update_names() {
+                    if let Err(e) = self.defs.words.update_names() {
                         println!("{} {}", "Error updating name index:".bright_red(), e);
                     }
                 }
@@ -267,7 +256,7 @@ impl Codebase {
                 if failures == 0 && words_added == 0 {
                     println!("Nothing added");
                 }
-                defs.reset();
+                self.defs.reset();
             } else {
                 println!("Cant add when there are errors");
             }
@@ -276,16 +265,15 @@ impl Codebase {
         }
         println!();
     }
-    pub fn ls(&self, path: Option<String>) {
+    pub fn ls(&mut self, path: Option<String>) {
         println!();
-        let path = path.or_else(|| self.path.lock().unwrap().clone());
-        let mut defs = self.defs();
+        let path = path.or_else(|| self.path.clone());
         let mut track_i = 1;
         // Modules
         if path.is_none() {
             println!("{}", "Modules".bright_white().bold());
             let mut set = BTreeSet::new();
-            for ident in defs.words.names.0.keys() {
+            for ident in self.defs.words.names.0.keys() {
                 if let Some(module) = &ident.module {
                     if !set.contains(&module) {
                         set.insert(module);
@@ -297,10 +285,11 @@ impl Codebase {
         }
         // Words
         let mut word_data = Vec::new();
-        for (ident, hashes) in &defs.words.names.0 {
+        for (ident, hashes) in &self.defs.words.names.0 {
             if path == ident.module {
                 for hash in hashes {
-                    let entry = defs
+                    let entry = self
+                        .defs
                         .words
                         .entry_by_hash(hash, Query::Saved)
                         .expect("name refers to invalid hash");
@@ -318,7 +307,7 @@ impl Codebase {
             .max()
             .unwrap_or(0);
         let pad_diff = "".bright_white().to_string().len() + "".bright_black().to_string().len();
-        defs.words.tracker.clear();
+        self.defs.words.tracker.clear();
         for (ident, sig, hash) in word_data {
             println!(
                 "{:>3}. {:pad$} {}",
@@ -336,7 +325,7 @@ impl Codebase {
                 sig,
                 pad = max_ident_len + pad_diff
             );
-            defs.words.tracker.insert(track_i, hash);
+            self.defs.words.tracker.insert(track_i, hash);
             track_i += 1;
         }
         println!();
@@ -373,7 +362,7 @@ pub enum CodebaseError {
 
 pub type Uses = Arc<Mutex<BTreeSet<String>>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Defs {
     pub words: ItemDefs<Word>,
     pub types: ItemDefs<Type>,
@@ -743,6 +732,7 @@ enum CompileError {
     Parse(#[from] ParseErrorKind),
 }
 
+#[derive(Debug)]
 struct Compilation {
     path: PathBuf,
     errors: Vec<Sp<CompileError>>,

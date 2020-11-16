@@ -43,9 +43,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Init codebase
     let cb_path = app.codebase.unwrap_or_else(|| PathBuf::from("."));
     let cb = Codebase::open(cb_path)?;
-    cb.print_path_prompt();
+    cb.lock().unwrap().print_path_prompt();
     // Command loop
     for line in recv {
+        let mut cb = cb.lock().unwrap();
         if line.trim().is_empty() {
             cb.print_path_prompt();
             continue;
