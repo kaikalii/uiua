@@ -94,11 +94,12 @@ impl Type {
         match (self, other) {
             (_, Type::Generic(_)) => true,
             (Type::Generic(_), _) => false,
+            (_, Type::Prim(Primitive::Never)) => true,
             (Type::Prim(Primitive::List(a)), Type::Prim(Primitive::List(b))) => a.is_subset_of(b),
             (Type::Prim(Primitive::Quotation(a)), Type::Prim(Primitive::Quotation(b))) => {
                 a.is_subset_of(b)
             }
-            _ => false,
+            (Type::Prim(a), Type::Prim(b)) => a == b,
         }
     }
 }
@@ -163,8 +164,9 @@ impl Ord for Generic {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 pub enum Primitive<T = Type> {
+    Never,
     Unit,
     Bool,
     Nat,
@@ -195,16 +197,31 @@ impl TreeHash for Primitive {
     }
 }
 
+impl<T> PartialEq for Primitive<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Primitive::Never, _) | (_, Primitive::Never) => true,
+            (Primitive::List(a), Primitive::List(b)) => a == b,
+            (Primitive::Quotation(a), Primitive::Quotation(b)) => a == b,
+            (a, b) => mem::discriminant(a) == mem::discriminant(b),
+        }
+    }
+}
+
 impl fmt::Display for Primitive {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Primitive::Unit => write!(f, "()"),
-            Primitive::Bool => write!(f, "Bool"),
-            Primitive::Nat => write!(f, "Nat"),
-            Primitive::Int => write!(f, "Int"),
-            Primitive::Float => write!(f, "Float"),
-            Primitive::Char => write!(f, "Char"),
-            Primitive::Text => write!(f, "Text"),
+            Primitive::Never => "!".fmt(f),
+            Primitive::Unit => "()".fmt(f),
+            Primitive::Bool => "Bool".fmt(f),
+            Primitive::Nat => "Nat".fmt(f),
+            Primitive::Int => "Int".fmt(f),
+            Primitive::Float => "Float".fmt(f),
+            Primitive::Char => "Char".fmt(f),
+            Primitive::Text => "Text".fmt(f),
             Primitive::List(inner) => write!(f, "[{}]", inner),
             Primitive::Quotation(sig) => fmt::Display::fmt(sig, f),
         }
@@ -423,7 +440,7 @@ impl Signature {
     }
     /// Check if two signatures can have a matching signature once generics are resolved
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        if self.before.len() != other.before.len() || self.after.len() != self.after.len() {
+        if self.before.len() != other.before.len() || self.after.len() != other.after.len() {
             let a = self.minimum_equivalent();
             let b = other.minimum_equivalent();
             return if &a == self && &b == other {
@@ -447,8 +464,8 @@ impl Signature {
     }
     /// Check if this signature is a subset of some other signature
     pub fn is_subset_of(&self, other: &Self) -> bool {
-        println!("{} subset of {}?", self, other);
-        if self.before.len() != other.before.len() || self.after.len() != self.after.len() {
+        // println!("{} is subset of {}?", self, other);
+        if self.before.len() != other.before.len() || self.after.len() != other.after.len() {
             let a = self.minimum_equivalent();
             let b = other.minimum_equivalent();
             return if &a == self && &b == other {
@@ -461,7 +478,7 @@ impl Signature {
         let b = self.exclusive_params(other);
         for (a, b) in &[(&a.before, b.before), (&a.after, b.after)] {
             for (a, b) in a.iter().zip(b) {
-                println!("{} vs {}", a, b);
+                // println!("{} vs {}", a, b);
                 match (a, b) {
                     (_, Type::Generic(_)) => {}
                     (Type::Generic(_), _) => return false,
@@ -473,7 +490,7 @@ impl Signature {
                 }
             }
         }
-        println!("is subset");
+        // println!("is subset");
         true
     }
     pub fn imagine_input_sig(&self) -> Self {

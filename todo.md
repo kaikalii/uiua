@@ -1,5 +1,6 @@
 - Data
 - use brackets for quotation types?
+- Comments
 - Runtime
 - Use statements
 - Lots more builtins

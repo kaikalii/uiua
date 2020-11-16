@@ -93,6 +93,7 @@ impl Parser {
     fn try_ty(&mut self) -> Result<Option<Sp<UnresolvedType>>, ParseError> {
         Ok(if let Some(ident) = self.ident()? {
             Some(ident.span.sp(match (&ident.module, ident.name.as_str()) {
+                (None, "!") => UnresolvedType::Prim(Primitive::Never),
                 (None, "Bool") => UnresolvedType::Prim(Primitive::Bool),
                 (None, "Nat") => UnresolvedType::Prim(Primitive::Nat),
                 (None, "Int") => UnresolvedType::Prim(Primitive::Int),

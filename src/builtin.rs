@@ -36,6 +36,8 @@ builtin_words!(
     Swap,
     /// Remove the top item
     Pop,
+    /// Panic with a message,
+    Panic,
 );
 
 fn generic_list() -> Type {
@@ -57,12 +59,6 @@ fn b() -> Type {
 impl BuiltinWord {
     pub fn sig(&self) -> Signature {
         let (before, after) = match self {
-            BuiltinWord::If => (vec![Primitive::Bool.into(), a(), a()], vec![a()]),
-            BuiltinWord::Dup => (vec![a()], vec![a(); 2]),
-            BuiltinWord::List => (vec![], vec![generic_list()]),
-            BuiltinWord::App => (vec![generic_list(), a()], vec![generic_list()]),
-            BuiltinWord::Swap => (vec![a(), b()], vec![b(), a()]),
-            BuiltinWord::Pop => (vec![a()], vec![]),
             BuiltinWord::Call(before, after) => {
                 let mut params = DefaultParams::default();
                 let mut before: Vec<_> = params.by_ref().take(*before as usize).collect();
@@ -72,6 +68,13 @@ impl BuiltinWord {
                 );
                 (before, after)
             }
+            BuiltinWord::If => (vec![Primitive::Bool.into(), a(), a()], vec![a()]),
+            BuiltinWord::Dup => (vec![a()], vec![a(); 2]),
+            BuiltinWord::List => (vec![], vec![generic_list()]),
+            BuiltinWord::App => (vec![generic_list(), a()], vec![generic_list()]),
+            BuiltinWord::Swap => (vec![a(), b()], vec![b(), a()]),
+            BuiltinWord::Pop => (vec![a()], vec![]),
+            BuiltinWord::Panic => (vec![Primitive::Text.into()], vec![Primitive::Never.into()]),
         };
         Signature::new(before, after)
     }
@@ -79,6 +82,7 @@ impl BuiltinWord {
         match self {
             BuiltinWord::If => Ident::module("control", "?"),
             BuiltinWord::Call(..) => Ident::module("control", "!"),
+            BuiltinWord::Panic => Ident::module("control", "panic"),
             BuiltinWord::Dup => Ident::module("stack", "dup"),
             BuiltinWord::List => Ident::module("list", "list"),
             BuiltinWord::App => Ident::module("list", "|<"),
