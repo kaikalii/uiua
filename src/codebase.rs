@@ -20,12 +20,12 @@ use sha3::*;
 use crate::{ast::*, builtin::*, parse::*, resolve::*, span::*, types::*};
 
 pub struct Codebase {
-    top_dir: Arc<PathBuf>,
-    path: Option<String>,
-    defs: Defs,
-    comp: Option<Compilation>,
-    last_scratch_file: Option<PathBuf>,
-    last_edit_time: Instant,
+    pub(crate) top_dir: Arc<PathBuf>,
+    pub(crate) path: Option<String>,
+    pub(crate) defs: Defs,
+    pub(crate) comp: Option<Compilation>,
+    pub(crate) last_scratch_file: Option<PathBuf>,
+    pub(crate) last_edit_time: Instant,
 }
 
 impl Codebase {
@@ -186,178 +186,6 @@ impl Codebase {
             "." | ".." => None,
             s => Some(s.into()),
         };
-    }
-    pub fn add(&mut self) {
-        println!();
-        if let Some(comp) = &self.comp {
-            if comp.errors.is_empty() {
-                let mut failures = 0;
-                // Add words
-                let mut words_added = 0;
-                let mut hashes_to_purge = Vec::new();
-                for (hash, entry) in &self.defs.words.entries {
-                    // Handle if there is an existing word in the codebase with the same name and signature
-                    let old_to_delete = if let Some(old) =
-                        self.defs.words.equivalent_entry(hash, entry, Query::Saved)
-                    {
-                        hashes_to_purge.push(old);
-                        self.defs
-                            .words
-                            .entry_by_hash(&hash, Query::All)
-                            .unwrap()
-                            .names
-                            .clear();
-                        if self.defs.words.hash_is_referenced(&hash) {
-                            None
-                        } else {
-                            Some(old)
-                        }
-                    } else {
-                        None
-                    };
-                    if let Err(e) = entry.save(hash, &self.top_dir, old_to_delete) {
-                        println!("{} adding word: {}", "Error".bright_red(), e);
-                        failures += 1;
-                    } else {
-                        words_added += 1;
-                    }
-                }
-                for hash in &hashes_to_purge {
-                    self.defs.words.names.purge_hash(hash);
-                }
-                // Report
-                // Added words
-                if words_added > 0 {
-                    println!(
-                        "{}",
-                        format!(
-                            "Added {} word{}",
-                            words_added,
-                            if words_added == 1 { "" } else { "s" }
-                        )
-                        .bright_green()
-                    );
-                    // Update names
-                    if let Err(e) = self.defs.words.update_names() {
-                        println!("{} {}", "Error updating name index:".bright_red(), e);
-                    }
-                }
-                // Removed words
-                if !hashes_to_purge.is_empty() {
-                    println!(
-                        "{}",
-                        format!(
-                            "Deleted {} unreferenced word{}",
-                            hashes_to_purge.len(),
-                            if hashes_to_purge.len() == 1 { "" } else { "s" }
-                        )
-                        .green()
-                    );
-                }
-                // Failures
-                if failures > 0 {
-                    println!(
-                        "{}",
-                        format!("{} items failed to be added", failures).bright_red()
-                    );
-                }
-                if failures == 0 && words_added == 0 {
-                    println!("Nothing added");
-                }
-                self.defs.reset();
-            } else {
-                println!("Cant add when there are errors");
-            }
-        } else {
-            println!("Nothing to add!");
-        }
-        println!();
-    }
-    pub fn ls(&mut self, path: Option<String>) {
-        println!();
-        let path = path.or_else(|| self.path.clone());
-        let mut track_i = 1;
-        // Modules
-        if path.is_none() {
-            println!("{}", "Modules".bright_white().bold());
-            let mut set = BTreeSet::new();
-            for ident in self.defs.words.names.0.keys() {
-                if let Some(module) = &ident.module {
-                    if !set.contains(&module) {
-                        set.insert(module);
-                        println!("{:>3}. {}", track_i, module.bright_white());
-                        track_i += 1
-                    }
-                }
-            }
-        }
-        // Words
-        let mut word_data = Vec::new();
-        for (ident, hashes) in &self.defs.words.names.0 {
-            if path == ident.module {
-                for hash in hashes {
-                    let entry = self
-                        .defs
-                        .words
-                        .entry_by_hash(hash, Query::Saved)
-                        .expect("name refers to invalid hash");
-                    word_data.push((ident.clone(), entry.item.sig.to_string(), *hash));
-                }
-            }
-        }
-        word_data.sort();
-        if !word_data.is_empty() {
-            println!("{}", "Words".bright_white().bold());
-        }
-        let max_ident_len = word_data
-            .iter()
-            .map(|(ident, ..)| ident.to_string().len())
-            .max()
-            .unwrap_or(0);
-        let pad_diff = "".bright_white().to_string().len() + "".bright_black().to_string().len();
-        self.defs.words.tracker.clear();
-        for (ident, sig, hash) in word_data {
-            println!(
-                "{:>3}. {:pad$} {}",
-                track_i,
-                format!(
-                    "{}{}",
-                    if let Some(m) = ident.module {
-                        format!("{}.", m)
-                    } else {
-                        String::new()
-                    }
-                    .bright_black(),
-                    ident.name.bright_white().bold()
-                ),
-                sig,
-                pad = max_ident_len + pad_diff
-            );
-            self.defs.words.tracker.insert(track_i, hash);
-            track_i += 1;
-        }
-        println!();
-    }
-    pub fn edit(&mut self) -> io::Result<()> {
-        let path = if let Some(path) = &self.last_scratch_file {
-            path.clone()
-        } else {
-            let scratch = PathBuf::from("scratch.uu");
-            if !scratch.exists() {
-                fs::write("scratch.uu", "")?;
-            }
-            scratch
-        };
-        let text = fs::read_to_string(&path)?;
-        let mut file = fs::OpenOptions::new().write(true).open(&path)?;
-        write!(file, "\n\n---\n{}", text)?;
-        drop(file);
-        open::that(path)?;
-        self.last_edit_time = Instant::now();
-        // Short sleep because open spawns a thread that prints a
-        // single newline to stdout, which messes up drawing
-        thread::sleep(Duration::from_millis(50));
-        Ok(())
     }
 }
 
@@ -569,7 +397,7 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct NameIndex<T>(
-    BTreeMap<Ident, BTreeSet<Hash>>,
+    pub(crate) BTreeMap<Ident, BTreeSet<Hash>>,
     #[serde(skip)] std::marker::PhantomData<T>,
 );
 
@@ -616,10 +444,10 @@ where
 pub struct ItemDefs<T> {
     top_dir: Arc<PathBuf>,
     uses: Uses,
-    names: NameIndex<T>,
-    hashes: BTreeMap<Ident, BTreeSet<Hash>>,
-    entries: ItemEntries<T>,
-    tracker: BTreeMap<usize, Hash>,
+    pub(crate) names: NameIndex<T>,
+    pub(crate) hashes: BTreeMap<Ident, BTreeSet<Hash>>,
+    pub(crate) entries: ItemEntries<T>,
+    pub(crate) tracker: BTreeMap<usize, Hash>,
 }
 
 pub type ItemEntries<T> = BTreeMap<Hash, ItemEntry<T>>;
@@ -754,7 +582,7 @@ impl ItemDefs<Word> {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum CompileError {
+pub(crate) enum CompileError {
     #[error("{0}")]
     Resolution(#[from] ResolutionError),
     #[error("{0}")]
@@ -762,10 +590,10 @@ enum CompileError {
 }
 
 #[derive(Debug)]
-struct Compilation {
-    path: PathBuf,
-    errors: Vec<Sp<CompileError>>,
-    code: String,
+pub(crate) struct Compilation {
+    pub path: PathBuf,
+    pub errors: Vec<Sp<CompileError>>,
+    pub code: String,
 }
 
 impl Compilation {

@@ -126,6 +126,9 @@ pub fn resolve_sequence(
                     sub_nodes.into_iter().map(|node| node.data).collect(),
                 )));
             }
+            UnresolvedNode::WhiteSpace(c) => {
+                resolved_nodes.push(node.span.sp(Node::WhiteSpace(*c)))
+            }
         }
     }
     // Test the final signature against the given one

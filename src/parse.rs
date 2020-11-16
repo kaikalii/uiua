@@ -64,6 +64,8 @@ impl Parser {
         if let Some(res) = transform.transform(token.tt.clone()) {
             self.loc = token.span.end;
             Ok(token.span.sp(res))
+        } else if let TT::WhiteSpace(_) = token.tt {
+            self.mat(expected, transform)
         } else {
             self.put_back = Some(token.clone());
             Err(ParseErrorKind::ExpectedFound {
@@ -165,7 +167,9 @@ impl Parser {
     fn seq(&mut self) -> Result<Vec<Sp<UnresolvedNode>>, ParseError> {
         let mut nodes = Vec::new();
         loop {
-            if let Some(node) = self.try_mat(TT::node) {
+            if let Some(whitespace) = self.try_mat(TT::whitespace) {
+                nodes.push(whitespace.map(UnresolvedNode::WhiteSpace))
+            } else if let Some(node) = self.try_mat(TT::node) {
                 nodes.push(node);
             } else if let Some(ident) = self.ident()? {
                 nodes.push(ident.map(UnresolvedNode::Ident));
@@ -307,13 +311,13 @@ where
 
 trait TTTransform {
     type Output;
-    fn transform(self, tt: TT) -> Option<Self::Output>;
+    fn transform(&self, tt: TT) -> Option<Self::Output>;
 }
 
 impl TTTransform for TT {
     type Output = ();
-    fn transform(self, tt: TT) -> Option<Self::Output> {
-        if self == tt {
+    fn transform(&self, tt: TT) -> Option<Self::Output> {
+        if self == &tt {
             Some(())
         } else {
             None
@@ -326,7 +330,7 @@ where
     F: Fn(TT) -> Option<R>,
 {
     type Output = R;
-    fn transform(self, tt: TT) -> Option<Self::Output> {
+    fn transform(&self, tt: TT) -> Option<Self::Output> {
         self(tt)
     }
 }

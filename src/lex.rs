@@ -29,6 +29,7 @@ pub enum TT {
     Colon,
     Equals,
     Data,
+    WhiteSpace(char),
 }
 
 impl TT {
@@ -49,6 +50,13 @@ impl TT {
             TT::Char(c) => UnresolvedNode::Literal(Literal::Char(c)),
             _ => return None,
         })
+    }
+    pub fn whitespace(self) -> Option<char> {
+        if let TT::WhiteSpace(c) = self {
+            Some(c)
+        } else {
+            None
+        }
     }
 }
 
@@ -73,6 +81,7 @@ impl fmt::Display for TT {
             TT::Equals => "=".fmt(f),
             TT::Data => "data".fmt(f),
             TT::Period => ".".fmt(f),
+            TT::WhiteSpace(c) => c.fmt(f),
         }
     }
 }
@@ -266,6 +275,7 @@ where
             }
             ':' => TT::Colon,
             '=' => TT::Equals,
+            '\n' | '\t' => TT::WhiteSpace(c),
             c if c.is_whitespace() => return self.next_token(),
             // Idents and others
             c if ident_char(c) => {

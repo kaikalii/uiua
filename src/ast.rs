@@ -1,9 +1,11 @@
-use std::{convert::*, fmt, mem};
+use std::{convert::*, fmt, mem, str::FromStr};
 
+use colored::*;
+use itertools::*;
 use serde::*;
 use sha3::*;
 
-use crate::{builtin::*, span::*, types::*};
+use crate::{builtin::*, codebase::*, span::*, types::*};
 
 type HashInner =
     digest::generic_array::GenericArray<u8, digest::generic_array::typenum::consts::U32>;
@@ -127,6 +129,7 @@ pub enum Node {
     SelfIdent,
     Quotation(Vec<Node>),
     Literal(Literal),
+    WhiteSpace(char),
 }
 
 impl Node {
@@ -137,10 +140,29 @@ impl Node {
             _ => false,
         }
     }
+    pub fn format(nodes: &[Node], word_name: &str, words: &ItemDefs<Word>) -> String {
+        nodes
+            .iter()
+            .map(|node| match node {
+                Node::Ident(hash) => words
+                    .entry_by_hash(hash, Query::All)
+                    .and_then(|entry| entry.names.iter().next().map(ToString::to_string))
+                    .unwrap_or_else(|| hash.to_string()[0..8].into()),
+                Node::SelfIdent => word_name.into(),
+                Node::Quotation(nodes) => format!("[ {} ]", Node::format(nodes, word_name, words)),
+                Node::Literal(lit) => lit.to_string(),
+                Node::WhiteSpace(c) => c.to_string(),
+            })
+            .intersperse(" ".into())
+            .collect::<String>()
+    }
 }
 
 impl TreeHash for Node {
     fn hash(&self, sha: &mut Sha3_256) {
+        if let Node::WhiteSpace(_) = self {
+            return;
+        }
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
             Node::Ident(hash) => sha.update(hash),
@@ -149,8 +171,8 @@ impl TreeHash for Node {
                     node.hash(sha);
                 }
             }
-            Node::SelfIdent => {}
             Node::Literal(lit) => lit.hash(sha),
+            Node::SelfIdent | Node::WhiteSpace(_) => {}
         }
     }
 }
@@ -224,9 +246,9 @@ impl From<Ident> for String {
 #[error("Error parsing ident")]
 pub struct IdentParseError;
 
-impl TryFrom<String> for Ident {
-    type Error = IdentParseError;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
+impl FromStr for Ident {
+    type Err = IdentParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.chars().filter(|c| c == &'.').count() > 1 {
             return Err(IdentParseError);
         }
@@ -242,11 +264,19 @@ impl TryFrom<String> for Ident {
     }
 }
 
+impl TryFrom<String> for Ident {
+    type Error = IdentParseError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum UnresolvedNode {
     Ident(Ident),
     Quotation(Vec<Sp<UnresolvedNode>>),
     Literal(Literal),
+    WhiteSpace(char),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,6 +312,19 @@ impl Literal {
             Literal::Float(_) => Primitive::Float,
             Literal::Char(_) => Primitive::Char,
             Literal::Text(_) => Primitive::Text,
+        }
+    }
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Literal::Bool(b) => b.to_string().blue().fmt(f),
+            Literal::Nat(n) => n.to_string().cyan().fmt(f),
+            Literal::Int(n) => n.to_string().cyan().fmt(f),
+            Literal::Float(n) => n.to_string().cyan().fmt(f),
+            Literal::Char(c) => c.to_string().yellow().fmt(f),
+            Literal::Text(s) => s.yellow().fmt(f),
         }
     }
 }
