@@ -151,6 +151,8 @@ impl Codebase {
                         }
                         Err(e) => Some((unresolved, Some(e))),
                     },
+                    // Datas
+                    UnresolvedItem::Data(_ud) => todo!(),
                 })
                 .collect();
             if unresolved_items.len() == last_len {

@@ -89,11 +89,8 @@ impl Parser {
             None
         })
     }
-    /// Match a type
-    fn ty(
-        &mut self,
-        params: &Sp<UnresolvedParams>,
-    ) -> Result<Option<Sp<UnresolvedType>>, ParseError> {
+    /// Try to match a type
+    fn try_ty(&mut self) -> Result<Option<Sp<UnresolvedType>>, ParseError> {
         Ok(if let Some(ident) = self.ident()? {
             Some(ident.span.sp(match (&ident.module, ident.name.as_str()) {
                 (None, "Bool") => UnresolvedType::Prim(Primitive::Bool),
@@ -106,17 +103,22 @@ impl Parser {
             }))
         } else if let Some(open_bracket) = self.try_mat(TT::OpenBracket) {
             let start = open_bracket.span.start;
-            if let Some(ty) = self.ty(params)? {
-                let end = self.mat("]", TT::CloseBracket)?.span.end;
-                Some(Span::new(start, end).sp(UnresolvedType::Prim(Primitive::List(Box::new(ty)))))
-            } else {
-                return self.expected("type");
-            }
-        } else if let Some(sig) = self.sig(params)? {
+            let ty = self.ty()?;
+            let end = self.mat("]", TT::CloseBracket)?.span.end;
+            Some(Span::new(start, end).sp(UnresolvedType::Prim(Primitive::List(Box::new(ty)))))
+        } else if let Some(sig) = self.sig()? {
             Some(sig.map(|sig| UnresolvedType::Prim(Primitive::Quotation(sig))))
         } else {
             return Ok(None);
         })
+    }
+    /// Match a type
+    fn ty(&mut self) -> Result<Sp<UnresolvedType>, ParseError> {
+        if let Some(ty) = self.try_ty()? {
+            Ok(ty)
+        } else {
+            self.expected("type")
+        }
     }
     /// Match type parameter declaration
     fn params(&mut self) -> Result<Sp<UnresolvedParams>, ParseError> {
@@ -136,22 +138,19 @@ impl Parser {
         Ok(Span::new(start, end).sp(names))
     }
     /// Match a type signature
-    fn sig(
-        &mut self,
-        params: &Sp<UnresolvedParams>,
-    ) -> Result<Option<Sp<UnresolvedSignature>>, ParseError> {
+    fn sig(&mut self) -> Result<Option<Sp<UnresolvedSignature>>, ParseError> {
         Ok(if let Some(open_paren) = self.try_mat(TT::OpenParen) {
             let start = open_paren.span.start;
             // Match before args types
             let mut before = Vec::new();
-            while let Some(ty) = self.ty(&params)? {
+            while let Some(ty) = self.try_ty()? {
                 before.push(ty);
             }
             // Match double dash
             self.mat("--", TT::DoubleDash)?;
             // Match after args types
             let mut after = Vec::new();
-            while let Some(ty) = self.ty(&params)? {
+            while let Some(ty) = self.try_ty()? {
                 after.push(ty);
             }
             // Match closing paren
@@ -192,7 +191,7 @@ impl Parser {
         // Match type parameters
         let params = self.params()?;
         // Match an optional type signature
-        let sig = self.sig(&params)?;
+        let sig = self.sig()?;
         if sig.is_none() && !params.is_empty() {
             return Err(ParseErrorKind::ExpectedSignature.span(params.span));
         }
@@ -200,22 +199,79 @@ impl Parser {
         self.mat('=', TT::Equals)?;
         // Match the nodes
         let nodes = self.seq()?;
-        let end = self.loc;
-        Ok(Span::new(start, end).sp(UnresolvedWord {
+        Ok(Span::new(start, self.loc).sp(UnresolvedWord {
             name,
             params,
             sig,
             nodes,
         }))
     }
+    /// Match a data definition
+    fn data(&mut self, data: Sp<()>) -> Result<Sp<UnresolvedData>, ParseError> {
+        let start = data.span.start;
+        // Match the name
+        let name = self.mat("name", TT::ident)?;
+        // Match type parameters
+        let params = self.params()?;
+        // Match equals sign
+        self.mat('=', TT::Equals)?;
+        let first = self.mat("name", TT::ident)?;
+        let kind_start = first.span.start;
+        Ok(if self.try_mat(TT::Colon).is_some() {
+            // Record
+            let first_ty = self.ty()?;
+            let mut fields = vec![(first.span - first_ty.span).sp(UnresolvedField {
+                name: first,
+                ty: first_ty,
+            })];
+            while let Some(name) = self.try_mat(TT::ident) {
+                self.mat(':', TT::Colon)?;
+                let ty = self.ty()?;
+                fields.push((name.span - ty.span).sp(UnresolvedField { name, ty }));
+            }
+            Span::new(start, self.loc).sp(UnresolvedData {
+                name,
+                params,
+                kind: Span::new(kind_start, self.loc).sp(UnresolvedDataKind::Record(fields)),
+            })
+        } else {
+            // Enum
+            let mut variant_name = first;
+            let mut variants = Vec::new();
+            loop {
+                let variant_start = variant_name.span.start;
+                let types_start = variant_name.span.end;
+                let mut variant_end = variant_name.span.end;
+                let mut types = Vec::new();
+                while let Some(ty) = self.try_ty()? {
+                    variant_end = ty.span.end;
+                    types.push(ty);
+                }
+                variants.push(Span::new(variant_start, variant_end).sp(UnresolvedVariant {
+                    name: variant_name,
+                    types: Span::new(types_start, variant_end).sp(types),
+                }));
+                variant_name = if self.try_mat(TT::Equals).is_some() {
+                    self.mat("name", TT::ident)?
+                } else {
+                    break;
+                }
+            }
+            Span::new(start, self.loc).sp(UnresolvedData {
+                name,
+                params,
+                kind: Span::new(kind_start, self.loc).sp(UnresolvedDataKind::Enum(variants)),
+            })
+        })
+    }
     /// Match an item
     fn item(&mut self) -> Result<UnresolvedItem, ParseError> {
-        Ok(if let Some(colon) = self.try_mat(TT::Colon) {
-            UnresolvedItem::Word(self.word(colon)?)
+        if let Some(colon) = self.try_mat(TT::Colon) {
+            self.word(colon).map(UnresolvedItem::Word)
         } else {
-            let _data = self.mat([":", "data"].as_ref(), TT::Data)?;
-            todo!()
-        })
+            let data = self.mat([":", "data"].as_ref(), TT::Data)?;
+            self.data(data).map(UnresolvedItem::Data)
+        }
     }
     fn expected<T, E: Expectation>(&mut self, expected: E) -> Result<T, ParseError> {
         Err(if let Some(token) = self.next_token() {

@@ -200,6 +200,42 @@ impl fmt::Display for Primitive {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Data {
+    pub variants: Vec<Vec<Type>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnresolvedData {
+    pub name: Sp<String>,
+    pub params: Sp<UnresolvedParams>,
+    pub kind: Sp<UnresolvedDataKind>,
+}
+
+#[derive(Debug, Clone)]
+pub enum UnresolvedDataKind {
+    Enum(Vec<Sp<UnresolvedVariant>>),
+    Record(Vec<Sp<UnresolvedField>>),
+}
+
+#[derive(Debug, Clone)]
+pub struct UnresolvedField {
+    pub name: Sp<String>,
+    pub ty: Sp<UnresolvedType>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnresolvedVariant {
+    pub name: Sp<String>,
+    pub types: Sp<Vec<Sp<UnresolvedType>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnresolvedType {
+    Prim(UnresolvedPrimitive),
+    Ident(Ident),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signature<T = Type> {
     pub before: Vec<T>,
@@ -590,10 +626,4 @@ impl SignatureError {
             output: self.output,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UnresolvedType {
-    Prim(UnresolvedPrimitive),
-    Ident(Ident),
 }

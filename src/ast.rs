@@ -158,6 +158,7 @@ impl TreeHash for Node {
 #[derive(Debug, Clone)]
 pub enum UnresolvedItem {
     Word(Sp<UnresolvedWord>),
+    Data(Sp<UnresolvedData>),
 }
 
 #[derive(Debug, Clone)]
