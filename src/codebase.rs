@@ -49,12 +49,12 @@ impl Codebase {
             let hash = word.hash_finish(&defs.words);
             ItemEntry {
                 item: word,
-                names: once(ident).collect(),
+                names: once(ident.clone()).collect(),
                 source: ItemSource::Saved,
             }
             .save(&hash, dir.as_ref(), None)?;
+            defs.words.names.0.entry(ident).or_default().insert(hash);
         }
-        defs.words.update_names()?;
         // Make codebase
         let cb = Arc::new(Mutex::new(Codebase {
             path: Default::default(),
@@ -130,7 +130,7 @@ impl Codebase {
                             if self
                                 .defs
                                 .words
-                                .equivalent_ident_and_sig(&ident, &word.sig, Query::Pending)
+                                .joint_ident_and_sig(&ident, &word.sig, Query::Pending)
                                 .any(|h| h != hash)
                             {
                                 let error_span = if let Some(unres_sig) = &uw.sig {
@@ -470,11 +470,6 @@ where
         self.hashes.clear();
         self.entries.clear();
     }
-    pub fn update_names(&mut self) -> Result<(), CodebaseError> {
-        self.names = T::get_names(&self.top_dir)?;
-        self.names.save(&self.top_dir)?;
-        Ok(())
-    }
     pub fn hashes_by_ident(&self, ident: &Ident, query: Query) -> Vec<Hash> {
         let mut ident_hashes = Vec::new();
         for ident in once(ident.clone()).chain(
@@ -549,24 +544,19 @@ impl ItemDefs<Word> {
             .map(|(hash, entry)| (hash, entry.item))
             .collect()
     }
-    pub fn equivalent_ident_and_sig<'a>(
+    pub fn joint_ident_and_sig<'a>(
         &'a self,
         ident: &Ident,
         sig: &'a Signature,
         query: Query,
     ) -> impl Iterator<Item = Hash> + 'a {
         self.entries_by_ident(ident, query)
-            .filter(move |(_, entry)| entry.item.sig.is_equivalent_to(sig))
+            .filter(move |(_, entry)| entry.item.sig.is_joint_with(sig))
             .map(|(hash, _)| hash)
     }
-    pub fn equivalent_entry(
-        &self,
-        hash: &Hash,
-        entry: &ItemEntry<Word>,
-        query: Query,
-    ) -> Option<Hash> {
+    pub fn joint_entry(&self, hash: &Hash, entry: &ItemEntry<Word>, query: Query) -> Option<Hash> {
         entry.names.iter().find_map(|ident| {
-            self.equivalent_ident_and_sig(ident, &entry.item.sig, query)
+            self.joint_ident_and_sig(ident, &entry.item.sig, query)
                 .find(|h| h != hash)
         })
     }
@@ -609,11 +599,7 @@ impl Compilation {
                     } else {
                         "no change".bright_black().to_string()
                     }
-                } else if defs
-                    .words
-                    .equivalent_entry(hash, entry, Query::Saved)
-                    .is_some()
-                {
+                } else if defs.words.joint_entry(hash, entry, Query::Saved).is_some() {
                     "and ready to be updated".into()
                 } else {
                     "and ready to be added".into()

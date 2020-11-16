@@ -438,29 +438,9 @@ impl Signature {
         }
         me
     }
-    /// Check if two signatures can have a matching signature once generics are resolved
-    pub fn is_equivalent_to(&self, other: &Self) -> bool {
-        if self.before.len() != other.before.len() || self.after.len() != other.after.len() {
-            let a = self.minimum_equivalent();
-            let b = other.minimum_equivalent();
-            return if &a == self && &b == other {
-                false
-            } else {
-                a.is_equivalent_to(&b)
-            };
-        }
-        let mut a = self.clone();
-        let mut b = self.exclusive_params(other);
-        let mut resolver = TypeResolver::default();
-        for (a, b) in a.before.iter().zip(&b.before) {
-            resolver.align(a, b);
-        }
-        for (a, b) in a.after.iter().zip(&b.after) {
-            resolver.align(a, b);
-        }
-        resolver.resolve_sig(&mut a);
-        resolver.resolve_sig(&mut b);
-        a.before == b.before && a.after == b.after
+    /// Check if two signatures are capable of describing the same thing
+    pub fn is_joint_with(&self, other: &Self) -> bool {
+        self.is_subset_of(other) || other.is_subset_of(self)
     }
     /// Check if this signature is a subset of some other signature
     pub fn is_subset_of(&self, other: &Self) -> bool {

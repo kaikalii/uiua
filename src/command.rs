@@ -31,32 +31,39 @@ impl Codebase {
                 let mut failures = 0;
                 // Add words
                 let mut words_added = 0;
+                let mut words_deleted = 0;
                 let mut hashes_to_purge = Vec::new();
                 for (hash, entry) in &self.defs.words.entries {
                     // Handle if there is an existing word in the codebase with the same name and signature
-                    let old_to_delete = if let Some(old) =
-                        self.defs.words.equivalent_entry(hash, entry, Query::Saved)
+                    let old_to_delete = if let Some(old_hash) =
+                        self.defs.words.joint_entry(hash, entry, Query::Saved)
                     {
-                        hashes_to_purge.push(old);
-                        self.defs
-                            .words
-                            .entry_by_hash(&hash, Query::All)
-                            .unwrap()
-                            .names
-                            .clear();
-                        if self.defs.words.hash_is_referenced(&hash) {
+                        hashes_to_purge.push(old_hash);
+                        if self.defs.words.hash_is_referenced(&old_hash) {
                             None
                         } else {
-                            Some(old)
+                            words_deleted += 1;
+                            Some(old_hash)
                         }
                     } else {
                         None
                     };
+                    // Save the entry file
                     if let Err(e) = entry.save(hash, &self.top_dir, old_to_delete) {
                         println!("{} adding word: {}", "Error".bright_red(), e);
                         failures += 1;
                     } else {
                         words_added += 1;
+                    }
+                    // Update names index
+                    for ident in &entry.names {
+                        self.defs
+                            .words
+                            .names
+                            .0
+                            .entry(ident.clone())
+                            .or_default()
+                            .insert(*hash);
                     }
                 }
                 for hash in &hashes_to_purge {
@@ -75,18 +82,31 @@ impl Codebase {
                         .bright_green()
                     );
                     // Update names
-                    if let Err(e) = self.defs.words.update_names() {
+                    if let Err(e) = self.defs.words.names.save(&self.top_dir) {
                         println!("{} {}", "Error updating name index:".bright_red(), e);
                     }
                 }
+                // Dereferenced words
+                let words_dereferenced = hashes_to_purge.len() - words_deleted;
+                if words_dereferenced > 0 {
+                    println!(
+                        "{}",
+                        format!(
+                            "Dereferenced {} word{}",
+                            words_dereferenced,
+                            if words_dereferenced == 1 { "" } else { "s" }
+                        )
+                        .green()
+                    );
+                }
                 // Removed words
-                if !hashes_to_purge.is_empty() {
+                if words_deleted > 0 {
                     println!(
                         "{}",
                         format!(
                             "Deleted {} unreferenced word{}",
-                            hashes_to_purge.len(),
-                            if hashes_to_purge.len() == 1 { "" } else { "s" }
+                            words_deleted,
+                            if words_deleted == 1 { "" } else { "s" }
                         )
                         .green()
                     );
