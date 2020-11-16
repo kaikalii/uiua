@@ -367,6 +367,7 @@ impl Signature {
         }
         me
     }
+    /// Check if two signatures can have a matching signature once generics are resolved
     pub fn is_equivalent_to(&self, other: &Self) -> bool {
         if self.before.len() != other.before.len() || self.after.len() != self.after.len() {
             let a = self.minimum_equivalent();

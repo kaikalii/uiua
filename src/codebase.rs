@@ -122,10 +122,28 @@ impl Codebase {
                     // Words
                     UnresolvedItem::Word(uw) => match resolve_word(&uw, &mut defs) {
                         Ok(word) => {
-                            defs.words.insert(
-                                Ident::new(self.path.lock().unwrap().clone(), uw.name.data.clone()),
-                                word,
-                            );
+                            let ident =
+                                Ident::new(self.path.lock().unwrap().clone(), uw.name.data.clone());
+                            let hash = word.hash_finish();
+                            // Check for identical word
+                            if defs
+                                .words
+                                .different_hash_ident_and_sig_exist(&hash, &ident, &word.sig)
+                            {
+                                let error_span = if let Some(unres_sig) = &uw.sig {
+                                    uw.name.span - unres_sig.span
+                                } else {
+                                    uw.name.span
+                                };
+                                return Some((
+                                    unresolved,
+                                    Some(error_span.sp(ResolutionError::NameAndSignatureExist {
+                                        ident,
+                                        sig: word.sig,
+                                    })),
+                                ));
+                            }
+                            defs.words.insert(ident, word);
                             None
                         }
                         Err(e) => Some((unresolved, Some(e))),
@@ -235,7 +253,7 @@ impl Codebase {
                 for hash in hashes {
                     let entry = defs
                         .words
-                        .by_hash(hash)
+                        .entry_by_hash(hash)
                         .expect("name referes to invalid hash");
                     word_data.push((ident.clone(), entry.item.sig.to_string(), *hash));
                 }
@@ -525,12 +543,15 @@ where
     pub fn _idents_by_hash(&self, hash: &Hash) -> Option<BTreeSet<Ident>> {
         self.entries.get(hash).map(|entry| entry.names.clone())
     }
-    pub fn by_ident(&mut self, ident: &Ident) -> impl Iterator<Item = (Hash, ItemEntry<T>)> + '_ {
+    pub fn entries_by_ident(
+        &mut self,
+        ident: &Ident,
+    ) -> impl Iterator<Item = (Hash, ItemEntry<T>)> + '_ {
         self.hashes_by_ident(ident)
             .into_iter()
-            .filter_map(move |hash| self.by_hash(&hash).map(|item| (hash, item)))
+            .filter_map(move |hash| self.entry_by_hash(&hash).map(|item| (hash, item)))
     }
-    pub fn by_hash(&self, hash: &Hash) -> Option<ItemEntry<T>> {
+    pub fn entry_by_hash(&self, hash: &Hash) -> Option<ItemEntry<T>> {
         self.entries
             .get(hash)
             .cloned()
@@ -553,10 +574,19 @@ where
 
 impl ItemDefs<Word> {
     pub fn by_ident_matching_sig(&mut self, ident: &Ident, sig: &Signature) -> Vec<(Hash, Word)> {
-        self.by_ident(ident)
+        self.entries_by_ident(ident)
             .filter(move |(_, entry)| sig.compose(&entry.item.sig).is_ok())
             .map(|(hash, entry)| (hash, entry.item))
             .collect()
+    }
+    pub fn different_hash_ident_and_sig_exist(
+        &mut self,
+        hash: &Hash,
+        ident: &Ident,
+        sig: &Signature,
+    ) -> bool {
+        self.entries_by_ident(ident)
+            .any(|(h, entry)| &h != hash && entry.item.sig.is_equivalent_to(sig))
     }
 }
 
