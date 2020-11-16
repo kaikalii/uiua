@@ -59,9 +59,10 @@ pub fn resolve_sequence(
                         sig.clone().map(|sig| sig.data)
                     };
                     let hash = if let Some(sig) = &sig_for_lookup {
-                        let matching_idents = defs.words.by_ident_matching_sig(ident, &sig);
+                        let matching_idents =
+                            defs.words.by_ident_matching_sig(ident, &sig, Query::All);
                         if matching_idents.is_empty() {
-                            return if defs.words.entries_by_ident(ident).count() > 0 {
+                            return if defs.words.entries_by_ident(ident, Query::All).count() > 0 {
                                 Err(node.span.sp(ResolutionError::IncompatibleWord {
                                     ident: ident.clone(),
                                     input_sig: sig.clone(),
@@ -77,7 +78,7 @@ pub fn resolve_sequence(
                         matching_idents[0].0
                     } else if let Some(hash) = defs
                         .words
-                        .entries_by_ident(ident)
+                        .entries_by_ident(ident, Query::All)
                         .next()
                         .map(|(hash, _)| hash)
                     {
@@ -88,7 +89,7 @@ pub fn resolve_sequence(
                     let hash = node.span.sp(hash);
                     let word = defs
                         .words
-                        .entry_by_hash(&hash)
+                        .entry_by_hash(&hash, Query::All)
                         .expect("word that was already found isn't present")
                         .item;
                     compose!(node.span.sp(word.sig.clone()), ident.to_string());
@@ -187,7 +188,7 @@ fn resolve_concrete_type(
     match &ty.data {
         UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
         UnresolvedType::Ident(name) => {
-            if let Some((_, ty)) = defs.types.entries_by_ident(name).next() {
+            if let Some((_, ty)) = defs.types.entries_by_ident(name, Query::All).next() {
                 Ok(ty.item)
             } else {
                 Err(ty.span.sp(ResolutionError::UnknownType(name.clone())))
@@ -255,8 +256,8 @@ pub enum ResolutionError {
     #[error("There are multiple words in scope that match the name \"{ident}\"")]
     MultipleMatchingWords { ident: Ident },
     #[error(
-        "A word with the name \"{ident}\" and a signature compatible with {sig} already exists,\n\
-        Rename this new one, or use the rename command to rename the existing one"
+        "Multiple words with the name \"{ident}\" and a signature compatible with {sig} are declared\n\
+        Delete or rename one of them"
     )]
     NameAndSignatureExist { ident: Ident, sig: Signature },
 }

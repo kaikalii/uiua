@@ -103,6 +103,16 @@ impl From<BuiltinWord> for Word {
     }
 }
 
+impl Word {
+    pub fn references_hash(&self, hash: &Hash) -> bool {
+        if let WordKind::Uiua(nodes) = &self.kind {
+            nodes.iter().any(|node| node.references_hash(hash))
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum WordKind {
@@ -117,6 +127,16 @@ pub enum Node {
     SelfIdent,
     Quotation(Vec<Node>),
     Literal(Literal),
+}
+
+impl Node {
+    pub fn references_hash(&self, hash: &Hash) -> bool {
+        match self {
+            Node::Ident(h) => h == hash,
+            Node::Quotation(nodes) => nodes.iter().any(|node| node.references_hash(hash)),
+            _ => false,
+        }
+    }
 }
 
 impl TreeHash for Node {

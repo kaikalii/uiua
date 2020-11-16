@@ -39,18 +39,19 @@ impl Codebase {
         let mut defs = Defs::new(&top_dir, None)?;
         // Words
         for biw in BuiltinWord::ALL_SIMPLE.iter().cloned().chain(
-            (0..0)
-                .map(|i| (0..0).map(move |j| BuiltinWord::Call(i, j)))
+            (0..5)
+                .map(|i| (0..5).map(move |j| BuiltinWord::Call(i, j)))
                 .flatten(),
         ) {
             let ident = biw.ident();
             let word = Word::from(biw);
-            let hash = word.hash_finish(&mut defs.words);
+            let hash = word.hash_finish(&defs.words);
             ItemEntry {
                 item: word,
                 names: once(ident).collect(),
+                source: ItemSource::Saved,
             }
-            .save(&hash, dir.as_ref())?;
+            .save(&hash, dir.as_ref(), None)?;
         }
         defs.words.update_names()?;
         // Make codebase
@@ -96,7 +97,7 @@ impl Codebase {
     }
     fn handle_file_change(&self, path: &Path) -> Result<(), CodebaseError> {
         let mut defs = self.defs();
-        defs.soft_reset();
+        defs.reset();
         let mut old_comp = self.comp.lock().unwrap();
         let path = path.to_path_buf();
         let buffer = fs::read(&path)?;
@@ -125,11 +126,12 @@ impl Codebase {
                         Ok(word) => {
                             let ident =
                                 Ident::new(self.path.lock().unwrap().clone(), uw.name.data.clone());
-                            let hash = word.hash_finish(&mut defs.words);
+                            let hash = word.hash_finish(&defs.words);
                             // Check for identical word
                             if defs
                                 .words
-                                .different_hash_ident_and_sig_exist(&hash, &ident, &word.sig)
+                                .equivalent_ident_and_sig(&ident, &word.sig, Query::Pending)
+                                .any(|h| h != hash)
                             {
                                 let error_span = if let Some(unres_sig) = &uw.sig {
                                     uw.name.span - unres_sig.span
@@ -195,21 +197,65 @@ impl Codebase {
                 let mut defs = self.defs();
                 // Add words
                 let mut words_added = 0;
+                let mut hashes_to_purge = Vec::new();
                 for (hash, entry) in &defs.words.entries {
-                    if let Err(e) = entry.save(hash, &self.top_dir) {
+                    // Handle if there is an existing word in the codebase with the same name and signature
+                    let old_to_delete =
+                        if let Some(old) = defs.words.equivalent_entry(hash, entry, Query::Saved) {
+                            hashes_to_purge.push(old);
+                            defs.words
+                                .entry_by_hash(&hash, Query::All)
+                                .unwrap()
+                                .names
+                                .clear();
+                            if defs.words.hash_is_referenced(&hash) {
+                                None
+                            } else {
+                                Some(old)
+                            }
+                        } else {
+                            None
+                        };
+                    if let Err(e) = entry.save(hash, &self.top_dir, old_to_delete) {
                         println!("{} adding word: {}", "Error".bright_red(), e);
                         failures += 1;
                     } else {
                         words_added += 1;
                     }
                 }
+                for hash in &hashes_to_purge {
+                    defs.words.names.purge_hash(hash);
+                }
                 // Report
+                // Added words
                 if words_added > 0 {
-                    println!("{}", format!("Added {} words", words_added).bright_green());
+                    println!(
+                        "{}",
+                        format!(
+                            "Added {} word{}",
+                            words_added,
+                            if words_added == 1 { "" } else { "s" }
+                        )
+                        .bright_green()
+                    );
+                    // Update names
                     if let Err(e) = defs.words.update_names() {
                         println!("{} {}", "Error updating name index:".bright_red(), e);
                     }
                 }
+                // Removed words
+                if !hashes_to_purge.is_empty() {
+                    println!(
+                        "{}",
+                        format!(
+                            "Deleted {} unreferenced word{}",
+                            hashes_to_purge.len(),
+                            if hashes_to_purge.len() == 1 { "" } else { "s" }
+                        )
+                        .green()
+                    );
+                }
+                // Failures
                 if failures > 0 {
                     println!(
                         "{}",
@@ -219,7 +265,7 @@ impl Codebase {
                 if failures == 0 && words_added == 0 {
                     println!("Nothing added");
                 }
-                defs.hard_reset();
+                defs.reset();
             } else {
                 println!("Cant add when there are errors");
             }
@@ -254,8 +300,8 @@ impl Codebase {
                 for hash in hashes {
                     let entry = defs
                         .words
-                        .entry_by_hash(hash)
-                        .expect("name referes to invalid hash");
+                        .entry_by_hash(hash, Query::Saved)
+                        .expect("name refers to invalid hash");
                     word_data.push((ident.clone(), entry.item.sig.to_string(), *hash));
                 }
             }
@@ -347,13 +393,9 @@ impl Defs {
         };
         Ok(defs)
     }
-    pub fn soft_reset(&mut self) {
-        self.words.soft_reset();
-        self.types.soft_reset();
-    }
-    pub fn hard_reset(&mut self) {
-        self.words.hard_reset();
-        self.types.hard_reset();
+    pub fn reset(&mut self) {
+        self.words.reset();
+        self.types.reset();
     }
 }
 
@@ -361,21 +403,31 @@ pub trait CodebaseItem:
     TreeHash + std::fmt::Debug + Clone + Serialize + de::DeserializeOwned + Send
 {
     const FOLDER: &'static str;
-    fn hash_finish(&self, items: &mut ItemDefs<Self>) -> Hash;
+    fn hash_finish(&self, _: &ItemDefs<Self>) -> Hash {
+        let mut sha = Sha3_256::default();
+        self.hash(&mut sha);
+        Hash(sha.finalize())
+    }
     fn get_names(top_dir: &Path) -> Result<NameIndex<Self>, CodebaseError> {
+        Self::get_names_from_entries(top_dir, Self::get_entries(top_dir)?)
+    }
+    fn get_names_from_entries(
+        top_dir: &Path,
+        entries: ItemEntries<Self>,
+    ) -> Result<NameIndex<Self>, CodebaseError> {
         let folder = top_dir.join(Self::FOLDER);
         let mut names = NameIndex::default();
         if !folder.exists() {
             return Ok(names);
         }
-        for (hash, entry) in Self::get_entries(top_dir)? {
+        for (hash, entry) in entries {
             for ident in entry.names {
                 names.0.entry(ident).or_default().insert(hash);
             }
         }
         Ok(names)
     }
-    fn get_entries(top_dir: &Path) -> Result<BTreeMap<Hash, ItemEntry<Self>>, CodebaseError> {
+    fn get_entries(top_dir: &Path) -> Result<ItemEntries<Self>, CodebaseError> {
         let folder = top_dir.join(Self::FOLDER);
         if !folder.exists() {
             return Ok(BTreeMap::new());
@@ -404,11 +456,11 @@ pub trait CodebaseItem:
 
 impl CodebaseItem for Word {
     const FOLDER: &'static str = "words";
-    fn hash_finish(&self, items: &mut ItemDefs<Self>) -> Hash {
+    fn hash_finish(&self, items: &ItemDefs<Self>) -> Hash {
         if let WordKind::Uiua(nodes) = &self.kind {
             if nodes.len() == 1 {
                 if let Node::Ident(hash) = nodes.first().unwrap() {
-                    if let Some(entry) = items.entry_by_hash(hash) {
+                    if let Some(entry) = items.entry_by_hash(hash, Query::All) {
                         if entry.item.sig == self.sig {
                             return *hash;
                         }
@@ -424,10 +476,33 @@ impl CodebaseItem for Word {
 
 impl CodebaseItem for Type {
     const FOLDER: &'static str = "types";
-    fn hash_finish(&self, _: &mut ItemDefs<Self>) -> Hash {
-        let mut sha = Sha3_256::default();
-        self.hash(&mut sha);
-        Hash(sha.finalize())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemSource {
+    Saved,
+    Pending,
+}
+
+impl Default for ItemSource {
+    fn default() -> Self {
+        ItemSource::Saved
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Query {
+    All,
+    Saved,
+    Pending,
+}
+
+impl Query {
+    pub fn saved(&self) -> bool {
+        self != &Query::Pending
+    }
+    pub fn pending(&self) -> bool {
+        self != &Query::Saved
     }
 }
 
@@ -435,15 +510,25 @@ impl CodebaseItem for Type {
 pub struct ItemEntry<T> {
     pub item: T,
     pub names: BTreeSet<Ident>,
+    #[serde(skip)]
+    pub source: ItemSource,
 }
 
 impl<T> ItemEntry<T>
 where
     T: CodebaseItem,
 {
-    pub fn save(&self, hash: &Hash, top_dir: &Path) -> Result<(), CodebaseError> {
+    pub fn save(
+        &self,
+        hash: &Hash,
+        top_dir: &Path,
+        old_to_delete: Option<Hash>,
+    ) -> Result<(), CodebaseError> {
         let folder = top_dir.join(T::FOLDER);
         fs::create_dir_all(&folder)?;
+        if let Some(old) = old_to_delete {
+            fs::remove_file(folder.join(old.to_string()))?;
+        }
         fs::write(folder.join(hash.to_string()), rmp_serde::to_vec(self)?)?;
         Ok(())
     }
@@ -494,6 +579,17 @@ where
         )?;
         Ok(())
     }
+    pub fn purge_hash(&mut self, hash: &Hash) {
+        let mut to_remove = Vec::new();
+        for (ident, hashes) in &mut self.0 {
+            if hashes.remove(hash) && hashes.is_empty() {
+                to_remove.push(ident.clone());
+            }
+        }
+        for ident in to_remove {
+            self.0.remove(&ident);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -504,7 +600,6 @@ pub struct ItemDefs<T> {
     hashes: BTreeMap<Ident, BTreeSet<Hash>>,
     entries: ItemEntries<T>,
     tracker: BTreeMap<usize, Hash>,
-    entries_cache: Option<ItemEntries<T>>,
 }
 
 pub type ItemEntries<T> = BTreeMap<Hash, ItemEntry<T>>;
@@ -521,28 +616,18 @@ where
             hashes: BTreeMap::new(),
             entries: BTreeMap::new(),
             tracker: BTreeMap::new(),
-            entries_cache: None,
         })
     }
-    pub fn soft_reset(&mut self) {
+    pub fn reset(&mut self) {
         self.hashes.clear();
         self.entries.clear();
-    }
-    pub fn hard_reset(&mut self) {
-        self.soft_reset();
-        self.entries_cache = None;
     }
     pub fn update_names(&mut self) -> Result<(), CodebaseError> {
         self.names = T::get_names(&self.top_dir)?;
         self.names.save(&self.top_dir)?;
         Ok(())
     }
-    pub fn saved_entries(&mut self) -> &ItemEntries<T> {
-        let top_dir = &self.top_dir;
-        self.entries_cache
-            .get_or_insert_with(|| T::get_entries(top_dir).unwrap_or_default())
-    }
-    pub fn hashes_by_ident(&mut self, ident: &Ident) -> Vec<Hash> {
+    pub fn hashes_by_ident(&self, ident: &Ident, query: Query) -> Vec<Hash> {
         let mut ident_hashes = Vec::new();
         for ident in once(ident.clone()).chain(
             if ident.module.is_some() {
@@ -552,33 +637,41 @@ where
             }
             .map(move |module| Ident::module(&module, &ident.name)),
         ) {
-            if let Some(hashes) = self.hashes.get(&ident) {
-                ident_hashes.extend(hashes.clone());
+            if query.pending() {
+                if let Some(hashes) = self.hashes.get(&ident) {
+                    ident_hashes.extend(hashes.clone());
+                }
             }
-            for (hash, entry) in self.saved_entries() {
-                if entry.names.contains(&ident) {
-                    ident_hashes.push(*hash);
+            if query.saved() {
+                if let Some(hashes) = self.names.0.get(&ident) {
+                    ident_hashes.extend(hashes.clone());
                 }
             }
         }
         ident_hashes
     }
-    pub fn _idents_by_hash(&self, hash: &Hash) -> Option<BTreeSet<Ident>> {
-        self.entries.get(hash).map(|entry| entry.names.clone())
-    }
     pub fn entries_by_ident(
-        &mut self,
+        &self,
         ident: &Ident,
+        query: Query,
     ) -> impl Iterator<Item = (Hash, ItemEntry<T>)> + '_ {
-        self.hashes_by_ident(ident)
+        self.hashes_by_ident(ident, query)
             .into_iter()
-            .filter_map(move |hash| self.entry_by_hash(&hash).map(|item| (hash, item)))
+            .filter_map(move |hash| self.entry_by_hash(&hash, query).map(|item| (hash, item)))
     }
-    pub fn entry_by_hash(&self, hash: &Hash) -> Option<ItemEntry<T>> {
-        self.entries
-            .get(hash)
-            .cloned()
-            .or_else(|| ItemEntry::<T>::load(hash, &self.top_dir).ok())
+    pub fn entry_by_hash(&self, hash: &Hash, query: Query) -> Option<ItemEntry<T>> {
+        if query.pending() {
+            self.entries.get(hash).cloned()
+        } else {
+            None
+        }
+        .or_else(|| {
+            if query.saved() {
+                ItemEntry::<T>::load(hash, &self.top_dir).ok()
+            } else {
+                None
+            }
+        })
     }
     pub fn insert(&mut self, ident: Ident, item: T) -> Hash {
         let hash = item.hash_finish(self);
@@ -588,6 +681,7 @@ where
             .or_insert_with(|| ItemEntry {
                 item,
                 names: BTreeSet::new(),
+                source: ItemSource::Pending,
             })
             .names
             .insert(ident);
@@ -596,20 +690,46 @@ where
 }
 
 impl ItemDefs<Word> {
-    pub fn by_ident_matching_sig(&mut self, ident: &Ident, sig: &Signature) -> Vec<(Hash, Word)> {
-        self.entries_by_ident(ident)
+    pub fn by_ident_matching_sig(
+        &self,
+        ident: &Ident,
+        sig: &Signature,
+        query: Query,
+    ) -> Vec<(Hash, Word)> {
+        self.entries_by_ident(ident, query)
             .filter(move |(_, entry)| sig.compose(&entry.item.sig).is_ok())
             .map(|(hash, entry)| (hash, entry.item))
             .collect()
     }
-    pub fn different_hash_ident_and_sig_exist(
-        &mut self,
-        hash: &Hash,
+    pub fn equivalent_ident_and_sig<'a>(
+        &'a self,
         ident: &Ident,
-        sig: &Signature,
-    ) -> bool {
-        self.entries_by_ident(ident)
-            .any(|(h, entry)| &h != hash && entry.item.sig.is_equivalent_to(sig))
+        sig: &'a Signature,
+        query: Query,
+    ) -> impl Iterator<Item = Hash> + 'a {
+        self.entries_by_ident(ident, query)
+            .filter(move |(_, entry)| entry.item.sig.is_equivalent_to(sig))
+            .map(|(hash, _)| hash)
+    }
+    pub fn equivalent_entry(
+        &self,
+        hash: &Hash,
+        entry: &ItemEntry<Word>,
+        query: Query,
+    ) -> Option<Hash> {
+        entry.names.iter().find_map(|ident| {
+            self.equivalent_ident_and_sig(ident, &entry.item.sig, query)
+                .find(|h| h != hash)
+        })
+    }
+    pub fn hash_is_referenced(&self, hash: &Hash) -> bool {
+        if let Ok(entries) = Word::get_entries(&self.top_dir) {
+            entries
+                .values()
+                .any(|entry| entry.item.references_hash(hash))
+        } else {
+            false
+        }
     }
 }
 
@@ -630,26 +750,28 @@ struct Compilation {
 impl Compilation {
     fn print(&self, defs: &mut Defs) -> Result<(), CodebaseError> {
         println!();
-        for (_, entry) in defs.words.entries_by_ident(&Ident::no_module("pop")) {
-            println!("sig of pop: {}", entry.item.sig);
-        }
         if self.errors.is_empty() {
             // Words
-            let codebase_words = Word::get_entries(&defs.words.top_dir)?;
-            for (hash, new_entry) in &defs.words.entries {
-                let message = if let Some(cb_entry) = codebase_words.get(hash) {
-                    if new_entry.names.intersection(&cb_entry.names).count() == 0 {
+            for (hash, entry) in &defs.words.entries {
+                let message = if let Some(cb_entry) = defs.words.entry_by_hash(hash, Query::Saved) {
+                    if entry.names.intersection(&cb_entry.names).count() == 0 {
                         format!("as alias for {}", cb_entry.format_names())
                     } else {
                         "no change".bright_black().to_string()
                     }
+                } else if defs
+                    .words
+                    .equivalent_entry(hash, entry, Query::Saved)
+                    .is_some()
+                {
+                    "and ready to be updated".into()
                 } else {
                     "and ready to be added".into()
                 };
                 println!(
                     "{} {} {} {}",
-                    new_entry.format_names(),
-                    new_entry.item.sig,
+                    entry.format_names(),
+                    entry.item.sig,
                     "OK".bright_green(),
                     message
                 );
