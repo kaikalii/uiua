@@ -1,3 +1,4 @@
+- finish edit command
 - Data
 - use brackets for quotation types?
 - Comments

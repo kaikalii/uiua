@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{mpsc, Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use colored::*;
@@ -24,6 +24,8 @@ pub struct Codebase {
     path: Option<String>,
     defs: Defs,
     comp: Option<Compilation>,
+    last_scratch_file: Option<PathBuf>,
+    last_edit_time: Instant,
 }
 
 impl Codebase {
@@ -59,6 +61,8 @@ impl Codebase {
             defs,
             top_dir,
             comp: Default::default(),
+            last_scratch_file: None,
+            last_edit_time: Instant::now(),
         }));
         let cb_clone = cb.clone();
         // Spawn watcher thread
@@ -69,20 +73,24 @@ impl Codebase {
                 if let DebouncedEvent::Write(path) = event {
                     // Handle file change
                     if let Some(diff) = pathdiff::diff_paths(&path, env::current_dir().unwrap()) {
-                        if is_scratch_file(&path) {
-                            let mut cb = cb.lock().unwrap();
-                            let cb = &mut *cb;
-                            match cb.handle_file_change(&path) {
-                                Ok(()) => {
-                                    println!();
-                                    if let Err(e) = cb.comp.as_ref().unwrap().print(&mut cb.defs) {
-                                        println!("{}", e)
-                                    }
-                                }
-                                Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
-                            }
-                            cb.print_path_prompt();
+                        if !is_scratch_file(&path) {
+                            continue;
                         }
+                        let mut cb = cb.lock().unwrap();
+                        let cb = &mut *cb;
+                        if Instant::now() - cb.last_edit_time < Duration::from_millis(100) {
+                            continue;
+                        }
+                        cb.last_scratch_file = Some(path.clone());
+                        match cb.handle_file_change(&path) {
+                            Ok(()) => {
+                                if let Err(e) = cb.comp.as_ref().unwrap().print(&mut cb.defs) {
+                                    println!("{}", e)
+                                }
+                            }
+                            Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
+                        }
+                        cb.print_path_prompt();
                     }
                 }
             }
@@ -329,6 +337,27 @@ impl Codebase {
             track_i += 1;
         }
         println!();
+    }
+    pub fn edit(&mut self) -> io::Result<()> {
+        let path = if let Some(path) = &self.last_scratch_file {
+            path.clone()
+        } else {
+            let scratch = PathBuf::from("scratch.uu");
+            if !scratch.exists() {
+                fs::write("scratch.uu", "")?;
+            }
+            scratch
+        };
+        let text = fs::read_to_string(&path)?;
+        let mut file = fs::OpenOptions::new().write(true).open(&path)?;
+        write!(file, "\n\n---\n{}", text)?;
+        drop(file);
+        open::that(path)?;
+        self.last_edit_time = Instant::now();
+        // Short sleep because open spawns a thread that prints a
+        // single newline to stdout, which messes up drawing
+        thread::sleep(Duration::from_millis(50));
+        Ok(())
     }
 }
 
@@ -741,6 +770,7 @@ struct Compilation {
 
 impl Compilation {
     fn print(&self, defs: &mut Defs) -> Result<(), CodebaseError> {
+        println!();
         println!();
         if self.errors.is_empty() {
             // Words

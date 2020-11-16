@@ -55,6 +55,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         match Command::from_iter_safe(args) {
             Ok(com) => match com {
                 Command::Add => cb.add(),
+                Command::Edit => {
+                    if let Err(e) = cb.edit() {
+                        println!("\n{}", e);
+                    }
+                }
                 Command::Ls { path } => cb.ls(path),
                 Command::Cd { path } => cb.cd(&path),
                 Command::Exit => break,
@@ -71,5 +76,6 @@ enum Command {
     Ls { path: Option<String> },
     Cd { path: String },
     Add,
+    Edit,
     Exit,
 }
