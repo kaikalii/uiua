@@ -15,6 +15,7 @@ use itertools::*;
 use notify::{self, watcher, DebouncedEvent, RecursiveMode, Watcher};
 use rayon::prelude::*;
 use serde::*;
+use sha3::*;
 
 use crate::{ast::*, builtin::*, parse::*, resolve::*, span::*, types::*};
 
@@ -38,13 +39,13 @@ impl Codebase {
         let mut defs = Defs::new(&top_dir, None)?;
         // Words
         for biw in BuiltinWord::ALL_SIMPLE.iter().cloned().chain(
-            (0..5)
-                .map(|i| (0..5).map(move |j| BuiltinWord::Call(i, j)))
+            (0..0)
+                .map(|i| (0..0).map(move |j| BuiltinWord::Call(i, j)))
                 .flatten(),
         ) {
             let ident = biw.ident();
             let word = Word::from(biw);
-            let hash = word.hash_finish();
+            let hash = word.hash_finish(&mut defs.words);
             ItemEntry {
                 item: word,
                 names: once(ident).collect(),
@@ -78,7 +79,7 @@ impl Codebase {
                                         .unwrap()
                                         .as_ref()
                                         .unwrap()
-                                        .print(&cb.defs.lock().unwrap())
+                                        .print(&mut cb.defs.lock().unwrap())
                                     {
                                         println!("{}", e)
                                     }
@@ -124,7 +125,7 @@ impl Codebase {
                         Ok(word) => {
                             let ident =
                                 Ident::new(self.path.lock().unwrap().clone(), uw.name.data.clone());
-                            let hash = word.hash_finish();
+                            let hash = word.hash_finish(&mut defs.words);
                             // Check for identical word
                             if defs
                                 .words
@@ -360,6 +361,7 @@ pub trait CodebaseItem:
     TreeHash + std::fmt::Debug + Clone + Serialize + de::DeserializeOwned + Send
 {
     const FOLDER: &'static str;
+    fn hash_finish(&self, items: &mut ItemDefs<Self>) -> Hash;
     fn get_names(top_dir: &Path) -> Result<NameIndex<Self>, CodebaseError> {
         let folder = top_dir.join(Self::FOLDER);
         let mut names = NameIndex::default();
@@ -402,10 +404,31 @@ pub trait CodebaseItem:
 
 impl CodebaseItem for Word {
     const FOLDER: &'static str = "words";
+    fn hash_finish(&self, items: &mut ItemDefs<Self>) -> Hash {
+        if let WordKind::Uiua(nodes) = &self.kind {
+            if nodes.len() == 1 {
+                if let Node::Ident(hash) = nodes.first().unwrap() {
+                    if let Some(entry) = items.entry_by_hash(hash) {
+                        if entry.item.sig == self.sig {
+                            return *hash;
+                        }
+                    }
+                }
+            }
+        }
+        let mut sha = Sha3_256::default();
+        self.hash(&mut sha);
+        Hash(sha.finalize())
+    }
 }
 
 impl CodebaseItem for Type {
     const FOLDER: &'static str = "types";
+    fn hash_finish(&self, _: &mut ItemDefs<Self>) -> Hash {
+        let mut sha = Sha3_256::default();
+        self.hash(&mut sha);
+        Hash(sha.finalize())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -514,7 +537,7 @@ where
         self.names.save(&self.top_dir)?;
         Ok(())
     }
-    pub fn saved_entried(&mut self) -> &ItemEntries<T> {
+    pub fn saved_entries(&mut self) -> &ItemEntries<T> {
         let top_dir = &self.top_dir;
         self.entries_cache
             .get_or_insert_with(|| T::get_entries(top_dir).unwrap_or_default())
@@ -532,7 +555,7 @@ where
             if let Some(hashes) = self.hashes.get(&ident) {
                 ident_hashes.extend(hashes.clone());
             }
-            for (hash, entry) in self.saved_entried() {
+            for (hash, entry) in self.saved_entries() {
                 if entry.names.contains(&ident) {
                     ident_hashes.push(*hash);
                 }
@@ -558,7 +581,7 @@ where
             .or_else(|| ItemEntry::<T>::load(hash, &self.top_dir).ok())
     }
     pub fn insert(&mut self, ident: Ident, item: T) -> Hash {
-        let hash = item.hash_finish();
+        let hash = item.hash_finish(self);
         self.hashes.entry(ident.clone()).or_default().insert(hash);
         self.entries
             .entry(hash)
@@ -605,8 +628,11 @@ struct Compilation {
 }
 
 impl Compilation {
-    fn print(&self, defs: &Defs) -> Result<(), CodebaseError> {
+    fn print(&self, defs: &mut Defs) -> Result<(), CodebaseError> {
         println!();
+        for (_, entry) in defs.words.entries_by_ident(&Ident::no_module("pop")) {
+            println!("sig of pop: {}", entry.item.sig);
+        }
         if self.errors.is_empty() {
             // Words
             let codebase_words = Word::get_entries(&defs.words.top_dir)?;

@@ -61,11 +61,6 @@ impl From<Hash> for String {
 
 pub trait TreeHash {
     fn hash(&self, sha: &mut Sha3_256);
-    fn hash_finish(&self) -> Hash {
-        let mut sha = Sha3_256::default();
-        self.hash(&mut sha);
-        Hash(sha.finalize())
-    }
 }
 
 impl<T> TreeHash for T
@@ -85,18 +80,6 @@ pub struct Word {
 }
 
 impl TreeHash for Word {
-    fn hash_finish(&self) -> Hash {
-        if let WordKind::Uiua(nodes) = &self.kind {
-            if nodes.len() == 1 {
-                if let Node::Ident(hash) = nodes.first().unwrap() {
-                    return *hash;
-                }
-            }
-        }
-        let mut sha = Sha3_256::default();
-        self.hash(&mut sha);
-        Hash(sha.finalize())
-    }
     fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(&self.kind)) });
         self.sig.hash(sha);

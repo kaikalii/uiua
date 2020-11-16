@@ -255,7 +255,7 @@ pub enum ResolutionError {
     #[error("There are multiple words in scope that match the name \"{ident}\"")]
     MultipleMatchingWords { ident: Ident },
     #[error(
-        "A word with the name \"{ident}\" and signature {sig} already exists,\n\
+        "A word with the name \"{ident}\" and a signature compatible with {sig} already exists,\n\
         Rename this new one, or use the rename command to rename the existing one"
     )]
     NameAndSignatureExist { ident: Ident, sig: Signature },
