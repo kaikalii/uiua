@@ -90,6 +90,17 @@ impl Type {
             Type::Generic(_) => {}
         }
     }
+    pub fn is_subset_of(&self, other: &Self) -> bool {
+        match (self, other) {
+            (_, Type::Generic(_)) => true,
+            (Type::Generic(_), _) => false,
+            (Type::Prim(Primitive::List(a)), Type::Prim(Primitive::List(b))) => a.is_subset_of(b),
+            (Type::Prim(Primitive::Quotation(a)), Type::Prim(Primitive::Quotation(b))) => {
+                a.is_subset_of(b)
+            }
+            _ => false,
+        }
+    }
 }
 
 impl TreeHash for Type {
@@ -254,16 +265,21 @@ impl UnresolvedSignature {
 impl Signature {
     pub fn new(before: Vec<Type>, after: Vec<Type>) -> Self {
         let mut sig = Signature { before, after };
-        let reassign: HashMap<u8, u8> = sig
+        let reassign: HashMap<u8, (u8, String)> = sig
             .generics()
             .into_iter()
+            .zip('a'..)
             .enumerate()
-            .map(|(i, g)| (g, i as u8))
+            .map(|(i, (g, c))| (g, (i as u8, String::from(c))))
             .collect();
         for ty in sig.before.iter_mut().chain(&mut sig.after) {
             ty.mutate(&mut |ty| {
                 if let Type::Generic(g) = ty {
-                    g.index = reassign[&g.index];
+                    let (index, name) = &reassign[&g.index];
+                    g.index = *index;
+                    if g.name.len() == 1 && g.name == g.name.to_lowercase() {
+                        g.name = name.clone();
+                    }
                 }
             });
         }
@@ -311,6 +327,8 @@ impl Signature {
         generics.dedup();
         generics
     }
+    /// Get a version of this signature with incremented generic indices
+    /// that make it distinct from another signature
     pub fn exclusive_params(&self, other: &Self) -> Self {
         let add_to_b = self.generics().last().copied().unwrap_or(0)
             - other.generics().first().copied().unwrap_or(0)
@@ -426,6 +444,37 @@ impl Signature {
         resolver.resolve_sig(&mut a);
         resolver.resolve_sig(&mut b);
         a.before == b.before && a.after == b.after
+    }
+    /// Check if this signature is a subset of some other signature
+    pub fn is_subset_of(&self, other: &Self) -> bool {
+        println!("{} subset of {}?", self, other);
+        if self.before.len() != other.before.len() || self.after.len() != self.after.len() {
+            let a = self.minimum_equivalent();
+            let b = other.minimum_equivalent();
+            return if &a == self && &b == other {
+                false
+            } else {
+                a.is_subset_of(&b)
+            };
+        }
+        let a = self;
+        let b = self.exclusive_params(other);
+        for (a, b) in &[(&a.before, b.before), (&a.after, b.after)] {
+            for (a, b) in a.iter().zip(b) {
+                println!("{} vs {}", a, b);
+                match (a, b) {
+                    (_, Type::Generic(_)) => {}
+                    (Type::Generic(_), _) => return false,
+                    (a, b) => {
+                        if !a.is_subset_of(b) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        println!("is subset");
+        true
     }
     pub fn imagine_input_sig(&self) -> Self {
         let after = self.before.clone();

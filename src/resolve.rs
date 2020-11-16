@@ -76,15 +76,23 @@ pub fn resolve_sequence(
                             }));
                         }
                         matching_idents[0].0
-                    } else if let Some(hash) = defs
-                        .words
-                        .entries_by_ident(ident, Query::All)
-                        .next()
-                        .map(|(hash, _)| hash)
-                    {
-                        hash
                     } else {
-                        return Err(node.span.sp(ResolutionError::UnknownWord(ident.clone())));
+                        let hashes: Vec<_> = defs
+                            .words
+                            .entries_by_ident(ident, Query::All)
+                            .map(|(hash, _)| hash)
+                            .collect();
+                        if hashes.len() == 1 {
+                            hashes[0]
+                        } else {
+                            return Err(node.span.sp(if hashes.is_empty() {
+                                ResolutionError::UnknownWord(ident.clone())
+                            } else {
+                                ResolutionError::MultipleMatchingWords {
+                                    ident: ident.clone(),
+                                }
+                            }));
+                        }
                     };
                     let hash = node.span.sp(hash);
                     let word = defs
@@ -129,7 +137,7 @@ pub fn resolve_sequence(
         })
         .unwrap_or_else(|| Signature::new(vec![], vec![]));
     if let Some(given) = given_sig {
-        if !given.is_equivalent_to(&sig) {
+        if !given.is_subset_of(&sig) {
             return Err(given.span.sp(ResolutionError::SignatureMismatch {
                 name: name.data.clone(),
                 expected: given.data.clone(),
@@ -138,8 +146,8 @@ pub fn resolve_sequence(
         }
     }
     // Always use the given signature if it exists
-    let sig = given_sig.map(|sig| sig.data.clone()).unwrap_or(sig);
-    Ok((resolved_nodes, sig))
+    let final_sig = given_sig.map(|sig| sig.data.clone()).unwrap_or(sig);
+    Ok((resolved_nodes, final_sig))
 }
 
 pub fn resolve_sig(

@@ -96,7 +96,7 @@ impl TreeHash for BuiltinWord {
 }
 
 #[derive(Default)]
-struct DefaultParams {
+pub struct DefaultParams {
     i: u8,
 }
 
