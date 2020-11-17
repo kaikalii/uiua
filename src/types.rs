@@ -30,6 +30,7 @@ impl Type {
                     .flat_map(Type::generics)
                     .chain(sig.after.iter().flat_map(Type::generics))
                     .collect(),
+                Primitive::Tuple(types) => types.iter().flat_map(Type::generics).collect(),
                 _ => Vec::new(),
             },
         };
@@ -65,6 +66,11 @@ impl Type {
                         ty.visit(f)
                     }
                 }
+                Primitive::Tuple(types) => {
+                    for ty in types {
+                        ty.visit(f)
+                    }
+                }
                 _ => {}
             },
             Type::Generic(_) => {}
@@ -86,6 +92,11 @@ impl Type {
                         ty.mutate(f)
                     }
                 }
+                Primitive::Tuple(types) => {
+                    for ty in types {
+                        ty.mutate(f)
+                    }
+                }
                 _ => {}
             },
             Type::Generic(_) => {}
@@ -99,6 +110,9 @@ impl Type {
             (Type::Prim(Primitive::List(a)), Type::Prim(Primitive::List(b))) => a.is_subset_of(b),
             (Type::Prim(Primitive::Quotation(a)), Type::Prim(Primitive::Quotation(b))) => {
                 a.is_subset_of(b)
+            }
+            (Type::Prim(Primitive::Tuple(a)), Type::Prim(Primitive::Tuple(b))) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.is_subset_of(b))
             }
             (Type::Prim(a), Type::Prim(b)) => a == b,
         }
@@ -194,6 +208,11 @@ impl TreeHash for Primitive {
         match self {
             Primitive::List(inner) => inner.hash(sha),
             Primitive::Quotation(sig) => sig.hash(sha),
+            Primitive::Tuple(types) => {
+                for ty in types {
+                    ty.hash(sha);
+                }
+            }
             _ => {}
         }
     }
@@ -208,6 +227,9 @@ where
             (Primitive::Never, _) | (_, Primitive::Never) => true,
             (Primitive::List(a), Primitive::List(b)) => a == b,
             (Primitive::Quotation(a), Primitive::Quotation(b)) => a == b,
+            (Primitive::Tuple(a), Primitive::Tuple(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a == b)
+            }
             (a, b) => mem::discriminant(a) == mem::discriminant(b),
         }
     }
@@ -514,6 +536,11 @@ impl TypeResolver {
                     }
                     for (a, b) in a.after.iter().rev().zip(b.after.iter().rev()) {
                         self.align(a, b);
+                    }
+                }
+                (Primitive::Tuple(a), Primitive::Tuple(b)) => {
+                    for (a, b) in a.iter().zip(b) {
+                        self.align(a, b)
                     }
                 }
                 _ => {}

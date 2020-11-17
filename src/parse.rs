@@ -18,6 +18,8 @@ pub enum ParseErrorKind {
     DocCommentOnUse,
     #[error("Lists must have exactly one type, and quotations require a '--'")]
     InvalidListOrQuotation,
+    #[error("{0} is not a valid tuple sizes. Tuples may have between 2 and 8 items")]
+    InvalidTupleSize(usize),
 }
 
 impl ParseErrorKind {
@@ -135,6 +137,18 @@ impl Parser {
                 (None, "Text") => UnresolvedType::Prim(Primitive::Text),
                 _ => UnresolvedType::Ident(ident.data),
             }))
+        } else if let Some(open_paren) = self.try_mat(TT::OpenParen) {
+            let start = open_paren.span.start;
+            let mut types = Vec::new();
+            while let Some(ty) = self.try_ty()? {
+                types.push(ty);
+            }
+            let end = self.mat(')', TT::CloseParen)?.span.end;
+            let span = Span::new(start, end);
+            if types.len() < 2 || types.len() > 8 {
+                return Err(ParseErrorKind::InvalidTupleSize(types.len()).span(span));
+            }
+            Some(span.sp(UnresolvedType::Prim(Primitive::Tuple(types))))
         } else if let Some(sig_or_list) = self.sig_or_list()? {
             Some(sig_or_list.map(|sol| match sol {
                 SigOrList::Sig(sig) => UnresolvedType::Prim(Primitive::Quotation(sig)),

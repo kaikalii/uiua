@@ -39,11 +39,11 @@ impl Codebase {
         let top_dir = Arc::new(dir.as_ref().to_path_buf());
         let mut defs = Defs::new(&top_dir)?;
         // Words
-        for biw in BuiltinWord::ALL_SIMPLE.iter().cloned().chain(
-            (0..5)
-                .map(|i| (0..5).map(move |j| BuiltinWord::Call(i, j)))
-                .flatten(),
-        ) {
+        for biw in BuiltinWord::ALL_SIMPLE
+            .iter()
+            .cloned()
+            .chain(BuiltinWord::all_complex())
+        {
             let ident = biw.ident();
             let word = Word::from(biw);
             let hash = word.hash_finish(&defs.words);

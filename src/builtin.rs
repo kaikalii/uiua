@@ -5,7 +5,7 @@ use sha3::*;
 
 use crate::{ast::*, types::*};
 
-pub static PRELUDE: &[&str] = &["stack", "list", "math", "control"];
+pub static PRELUDE: &[&str] = &["stack", "list", "tuple", "control"];
 
 macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
@@ -15,7 +15,11 @@ macro_rules! builtin_words {
                 $(#[$doc])*
                 $name,
             )*
-            Call(u8, u8)
+            Call(u8, u8),
+            TupleCompose(u8),
+            TupleDecompose(u8),
+            TupleGet(u8, u8),
+            TupleSet(u8, u8),
         }
         impl BuiltinWord {
             pub const ALL_SIMPLE: &'static [BuiltinWord] = &[$(BuiltinWord::$name),*];
@@ -27,7 +31,11 @@ macro_rules! builtin_words {
                             format!("{}\n", s[9..(s.len() - 1)].trim())
                         },
                     )*
-                    BuiltinWord::Call(..) => "Invoke a quotation\n".into()
+                    BuiltinWord::Call(..) => "Invoke a quotation\n".into(),
+                    BuiltinWord::TupleCompose(size) => format!("Pop the top {} items and push a {}", size, tuple(*size)),
+                    BuiltinWord::TupleDecompose(size) => format!("Pop a {} and push the {} items in order", tuple(*size), size),
+                    BuiltinWord::TupleGet(_, n) => format!("Get the {} item of a tuple", ordinal(*n)),
+                    BuiltinWord::TupleSet(_, n) => format!("Set the {} item of a tuple", ordinal(*n)),
                 }
             }
         }
@@ -77,6 +85,23 @@ fn b() -> Type {
 }
 
 impl BuiltinWord {
+    pub fn all_complex() -> impl Iterator<Item = Self> {
+        let call = (0..5)
+            .map(|i| (0..5).map(move |j| BuiltinWord::Call(i, j)))
+            .flatten();
+        let tuple_compose = (2..=8).map(BuiltinWord::TupleCompose);
+        let tuple_decompose = (2..=8).map(BuiltinWord::TupleDecompose);
+        let tuple_get = (2..=8)
+            .map(|size| (0..2).map(move |n| BuiltinWord::TupleGet(size, n)))
+            .flatten();
+        let tuple_set = (2..=8)
+            .map(|size| (0..2).map(move |n| BuiltinWord::TupleSet(size, n)))
+            .flatten();
+        call.chain(tuple_compose)
+            .chain(tuple_decompose)
+            .chain(tuple_get)
+            .chain(tuple_set)
+    }
     pub fn sig(&self) -> Signature {
         let (before, after) = match self {
             BuiltinWord::Call(before, after) => {
@@ -87,6 +112,24 @@ impl BuiltinWord {
                     Primitive::Quotation(Signature::new(before.clone(), after.clone())).into(),
                 );
                 (before, after)
+            }
+            BuiltinWord::TupleCompose(size) => {
+                let params: Vec<_> = DefaultParams::default().take(*size as usize).collect();
+                (params.clone(), vec![Primitive::Tuple(params).into()])
+            }
+            BuiltinWord::TupleDecompose(size) => {
+                let params: Vec<_> = DefaultParams::default().take(*size as usize).collect();
+                (vec![Primitive::Tuple(params.clone()).into()], params)
+            }
+            BuiltinWord::TupleGet(size, n) => {
+                let params: Vec<_> = DefaultParams::default().take(*size as usize).collect();
+                let output = params[*n as usize].clone();
+                (vec![Primitive::Tuple(params).into()], vec![output])
+            }
+            BuiltinWord::TupleSet(size, n) => {
+                let params: Vec<_> = DefaultParams::default().take(*size as usize).collect();
+                let input = params[*n as usize].clone();
+                (vec![input], vec![Primitive::Tuple(params).into()])
             }
             BuiltinWord::If => (vec![Primitive::Bool.into(), a(), a()], vec![a()]),
             BuiltinWord::Dup => (vec![a()], vec![a(); 2]),
@@ -116,6 +159,14 @@ impl BuiltinWord {
             BuiltinWord::ListPopFront => Ident::module("list", "<|"),
             BuiltinWord::Swap => Ident::module("stack", "swap"),
             BuiltinWord::Pop => Ident::module("stack", "pop"),
+            BuiltinWord::TupleCompose(size) => {
+                Ident::module("tuple".into(), format!(">>{}", tuple(*size)))
+            }
+            BuiltinWord::TupleDecompose(size) => {
+                Ident::module("tuple".into(), format!("{}>>", tuple(*size)))
+            }
+            BuiltinWord::TupleGet(_, n) => Ident::module("tuple".into(), format!("{}>>", n)),
+            BuiltinWord::TupleSet(_, n) => Ident::module("tuple".into(), format!(">>{}", n)),
         }
     }
 }
@@ -128,7 +179,7 @@ impl TreeHash for BuiltinWord {
 }
 
 #[derive(Default)]
-pub struct DefaultParams {
+struct DefaultParams {
     i: u8,
 }
 
@@ -145,5 +196,34 @@ impl Iterator for DefaultParams {
         } else {
             None
         }
+    }
+}
+
+fn ordinal(n: u8) -> &'static str {
+    match n {
+        0 => "first",
+        1 => "second",
+        2 => "third",
+        3 => "fourth",
+        4 => "fifth",
+        5 => "sixth",
+        6 => "seventh",
+        7 => "eighth",
+        8 => "ninth",
+        9 => "tenth",
+        n => unimplemented!("ordinal not implement for {}", n),
+    }
+}
+
+fn tuple(n: u8) -> &'static str {
+    match n {
+        2 => "pair",
+        3 => "trio",
+        4 => "quad",
+        5 => "quint",
+        6 => "sext",
+        7 => "sept",
+        8 => "oct",
+        n => unimplemented!("tuple not implement for {}", n),
     }
 }
