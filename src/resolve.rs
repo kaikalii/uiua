@@ -4,27 +4,27 @@ use crate::{ast::*, codebase::*, span::*, types::*};
 
 pub fn resolve_item(
     item: &UnresolvedItem,
-    defs: &mut Defs,
     path: &Option<String>,
-    insert: bool,
+    read_defs: &Defs,
+    write_defs: &mut Defs,
 ) -> SpResult<(), ResolutionError> {
     match &item {
         // Uses
         UnresolvedItem::Use(module) => {
-            let module_exists = defs
+            let module_exists = read_defs
                 .words
                 .names
                 .0
                 .keys()
                 .any(|ident| ident.module.as_ref().map_or(false, |m| m == &module.data))
-                || defs
+                || read_defs
                     .types
                     .names
                     .0
                     .keys()
                     .any(|ident| ident.module.as_ref().map_or(false, |m| m == &module.data));
             if module_exists {
-                defs.uses.lock().unwrap().insert(module.data.clone());
+                read_defs.uses.lock().unwrap().insert(module.data.clone());
                 Ok(())
             } else {
                 Err(module.clone().map(ResolutionError::UnknownModule))
@@ -32,11 +32,11 @@ pub fn resolve_item(
         }
         // Words
         UnresolvedItem::Word(uw) => {
-            let word = resolve_word(&uw, defs)?;
+            let word = resolve_word(&uw, read_defs)?;
             let ident = Ident::new(path.clone(), uw.name.data.clone());
-            let hash = word.hash_finish(&defs.words);
+            let hash = word.hash_finish(&read_defs.words);
             // Check for identical word
-            if defs
+            if read_defs
                 .words
                 .joint_ident_and_sig(&ident, &word.sig, Query::Pending)
                 .any(|h| h != hash)
@@ -51,9 +51,7 @@ pub fn resolve_item(
                     sig: word.sig,
                 }));
             }
-            if insert {
-                defs.words.insert(ident, word);
-            }
+            write_defs.words.insert(ident, word);
             Ok(())
         }
         // Datas
@@ -61,7 +59,7 @@ pub fn resolve_item(
     }
 }
 
-pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &mut Defs) -> SpResult<Word, ResolutionError> {
+pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
     let given_sig = if let Some(sig) = &word.sig {
         Some(resolve_sig(sig, defs, &word.params)?)
     } else {
@@ -78,7 +76,7 @@ pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &mut Defs) -> SpResult<Word
 
 pub fn resolve_sequence(
     nodes: &[Sp<UnresolvedNode>],
-    defs: &mut Defs,
+    defs: &Defs,
     name: &Sp<String>,
     given_sig: Option<&Sp<Signature>>,
 ) -> SpResult<(Vec<Sp<Node>>, Signature), ResolutionError> {
@@ -232,7 +230,7 @@ pub fn resolve_sequence(
 
 pub fn resolve_sig(
     sig: &Sp<UnresolvedSignature>,
-    defs: &mut Defs,
+    defs: &Defs,
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     let mut resolved_before = Vec::new();
@@ -250,7 +248,7 @@ pub fn resolve_sig(
 
 pub fn resolve_type(
     ty: &Sp<UnresolvedType>,
-    defs: &mut Defs,
+    defs: &Defs,
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Type, ResolutionError> {
     if let UnresolvedType::Ident(ident) = &**ty {
@@ -270,7 +268,7 @@ pub fn resolve_type(
 
 fn resolve_concrete_type(
     ty: &Sp<UnresolvedType>,
-    defs: &mut Defs,
+    defs: &Defs,
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Type, ResolutionError> {
     match &ty.data {
@@ -287,7 +285,7 @@ fn resolve_concrete_type(
 
 pub fn resolve_prim(
     prim: &UnresolvedPrimitive,
-    defs: &mut Defs,
+    defs: &Defs,
     span: Span,
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Primitive, ResolutionError> {

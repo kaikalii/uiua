@@ -125,10 +125,11 @@ impl Codebase {
             .chain(self.path.clone())
             .collect();
         // Try to resolve each item until the number of errors does not change
+        let mut temp_defs = self.defs.clone();
         loop {
             errors = unresolved_items
                 .iter()
-                .filter_map(|item| resolve_item(item, &mut self.defs, &self.path, false).err())
+                .filter_map(|item| resolve_item(item, &self.path, &self.defs, &mut temp_defs).err())
                 .collect();
             if errors.len() == errors_len {
                 break;
@@ -137,7 +138,7 @@ impl Codebase {
         }
         if errors.is_empty() {
             for item in unresolved_items {
-                resolve_item(&item, &mut self.defs, &self.path, true).unwrap();
+                resolve_item(&item, &self.path, &temp_defs, &mut self.defs).unwrap();
             }
         }
         comp.errors
