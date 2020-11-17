@@ -129,6 +129,12 @@ pub struct TypeAlias {
     pub ty: Type,
 }
 
+impl TreeHash for TypeAlias {
+    fn hash(&self, sha: &mut Sha3_256) {
+        self.ty.hash(sha);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Node {

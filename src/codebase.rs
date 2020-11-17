@@ -209,7 +209,7 @@ pub type Uses = Arc<Mutex<BTreeSet<String>>>;
 pub struct Defs {
     pub uses: Uses,
     pub words: ItemDefs<Word>,
-    pub types: ItemDefs<Type>,
+    pub types: ItemDefs<TypeAlias>,
 }
 
 impl Defs {
@@ -237,6 +237,7 @@ pub trait CodebaseItem:
     const FOLDER: &'static str;
     fn joinable(&self) -> &Self::Joinable;
     fn is_joint(a: &Self::Joinable, b: &Self::Joinable) -> bool;
+    fn items(defs: &Defs) -> &ItemDefs<Self>;
     fn hash_finish(&self, _: &ItemDefs<Self>) -> Hash {
         let mut sha = Sha3_256::default();
         self.hash(&mut sha);
@@ -297,6 +298,9 @@ impl CodebaseItem for Word {
     fn is_joint(a: &Self::Joinable, b: &Self::Joinable) -> bool {
         a.is_joint_with(b)
     }
+    fn items(defs: &Defs) -> &ItemDefs<Self> {
+        &defs.words
+    }
     fn hash_finish(&self, items: &ItemDefs<Self>) -> Hash {
         if let WordKind::Uiua(nodes) = &self.kind {
             if nodes.len() == 1 {
@@ -317,7 +321,7 @@ impl CodebaseItem for Word {
 
 static TYPE_JOINABLE: () = ();
 
-impl CodebaseItem for Type {
+impl CodebaseItem for TypeAlias {
     type Joinable = ();
     const FOLDER: &'static str = "types";
     fn joinable(&self) -> &Self::Joinable {
@@ -325,6 +329,9 @@ impl CodebaseItem for Type {
     }
     fn is_joint(_: &Self::Joinable, _: &Self::Joinable) -> bool {
         true
+    }
+    fn items(defs: &Defs) -> &ItemDefs<Self> {
+        &defs.types
     }
 }
 

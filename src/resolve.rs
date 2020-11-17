@@ -46,6 +46,9 @@ pub fn resolve_item(
         UnresolvedItem::Type(ut) => {
             // Resolve
             let (alias, words) = resolve_type_alias(ut, read_defs)?;
+            // Insert alias
+            let ident = Ident::new(path.clone(), ut.name.data.clone());
+            insert_type_alias(ident, alias, maybe_read_defs, write_defs, ut.span)?;
             // Insert words
             for (name, word) in words {
                 let ident = Ident::new(path.clone(), name);
@@ -80,9 +83,30 @@ pub fn insert_word(
     Ok(())
 }
 
+pub fn insert_type_alias(
+    ident: Ident,
+    alias: TypeAlias,
+    read_defs: Option<&Defs>,
+    write_defs: &mut Defs,
+    error_span: Span,
+) -> SpResult<(), ResolutionError> {
+    let read_defs = read_defs.unwrap_or(write_defs);
+    let hash = alias.hash_finish(&read_defs.types);
+    // Check for identical type
+    if read_defs
+        .types
+        .joint_ident(&ident, &(), Query::Pending)
+        .any(|h| h != hash)
+    {
+        return Err(error_span.sp(ResolutionError::AliasNameExists(ident)));
+    }
+    write_defs.types.insert(ident, alias);
+    Ok(())
+}
+
 pub fn resolve_type_alias(
-    data: &Sp<UnresolvedTypeAlias>,
-    defs: &Defs,
+    _alias: &Sp<UnresolvedTypeAlias>,
+    _defs: &Defs,
 ) -> SpResult<(TypeAlias, Vec<(String, Word)>), ResolutionError> {
     todo!()
 }
@@ -302,8 +326,8 @@ fn resolve_concrete_type(
     match &ty.data {
         UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
         UnresolvedType::Ident(name) => {
-            if let Some((_, ty)) = defs.types.entries_by_ident(name, Query::All).next() {
-                Ok(ty.item)
+            if let Some((_, alias)) = defs.types.entries_by_ident(name, Query::All).next() {
+                Ok(alias.item.ty)
             } else {
                 Err(ty.span.sp(ResolutionError::UnknownType(name.clone())))
             }
@@ -375,6 +399,11 @@ pub enum ResolutionError {
         Delete or rename one of them"
     )]
     NameAndSignatureExist { ident: Ident, sig: Signature },
+    #[error(
+        "Multiple types with the name \"{0}\" are declared\n\
+        Delete or rename one of them"
+    )]
+    AliasNameExists(Ident),
     #[error("Unknown module {0}")]
     UnknownModule(String),
 }
