@@ -14,6 +14,8 @@ pub enum ParseErrorKind {
     ExpectedSignature,
     #[error("{0}")]
     IdentParse(#[from] IdentParseError),
+    #[error("Cannot apply doc comments to use statements")]
+    DocCommentOnUse,
 }
 
 impl ParseErrorKind {
@@ -306,8 +308,14 @@ impl Parser {
         }
         if let Some(colon) = self.try_mat(TT::Colon) {
             self.word(doc, colon).map(UnresolvedItem::Word)
+        } else if self.try_mat(TT::Use).is_some() {
+            let module = self.mat("module name", TT::ident)?;
+            if !doc.is_empty() {
+                return Err(ParseErrorKind::DocCommentOnUse.span(module.span));
+            }
+            Ok(UnresolvedItem::Use(module))
         } else {
-            let data = self.mat([":", "data"].as_ref(), TT::Data)?;
+            let data = self.mat([":", "data", "use"].as_ref(), TT::Data)?;
             self.data(data).map(UnresolvedItem::Data)
         }
     }

@@ -37,7 +37,7 @@ impl Codebase {
         watcher.watch(env::current_dir()?, RecursiveMode::Recursive)?;
         // Create builtin entries
         let top_dir = Arc::new(dir.as_ref().to_path_buf());
-        let mut defs = Defs::new(&top_dir, None)?;
+        let mut defs = Defs::new(&top_dir)?;
         // Words
         for biw in BuiltinWord::ALL_SIMPLE.iter().cloned().chain(
             (0..5)
@@ -116,11 +116,33 @@ impl Codebase {
             }
         };
         let mut last_len = 0;
+        // Set defs uses
+        *self.defs.uses.lock().unwrap() = PRELUDE
+            .iter()
+            .copied()
+            .map(Into::into)
+            .chain(self.path.clone())
+            .collect();
         // Try to resolve each item until the number that has been resolved does not change
         loop {
             unresolved_items = unresolved_items
                 .into_iter()
                 .filter_map(|(unresolved, _)| match &unresolved {
+                    // Uses
+                    UnresolvedItem::Use(module) => {
+                        let module_exists = self.defs.words.names.0.keys().any(|ident| {
+                            ident.module.as_ref().map_or(false, |m| m == &module.data)
+                        }) || self.defs.types.names.0.keys().any(|ident| {
+                            ident.module.as_ref().map_or(false, |m| m == &module.data)
+                        });
+                        if module_exists {
+                            self.defs.uses.lock().unwrap().insert(module.data.clone());
+                            None
+                        } else {
+                            let error = module.clone().map(ResolutionError::UnknownModule);
+                            Some((unresolved, Some(error)))
+                        }
+                    }
                     // Words
                     UnresolvedItem::Word(uw) => match resolve_word(&uw, &mut self.defs) {
                         Ok(word) => {
@@ -234,15 +256,8 @@ pub struct Defs {
 }
 
 impl Defs {
-    pub fn new(top_dir: &Arc<PathBuf>, path: Option<String>) -> Result<Self, CodebaseError> {
-        let uses = Arc::new(Mutex::new(
-            PRELUDE
-                .iter()
-                .copied()
-                .map(Into::into)
-                .chain(path)
-                .collect(),
-        ));
+    pub fn new(top_dir: &Arc<PathBuf>) -> Result<Self, CodebaseError> {
+        let uses = Arc::new(Mutex::new(BTreeSet::new()));
         let defs = Defs {
             words: ItemDefs::new(top_dir, &uses)?,
             types: ItemDefs::new(top_dir, &uses)?,

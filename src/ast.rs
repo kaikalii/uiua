@@ -196,6 +196,7 @@ impl fmt::Display for Unhashed {
 pub enum UnresolvedItem {
     Word(Sp<UnresolvedWord>),
     Data(Sp<UnresolvedData>),
+    Use(Sp<String>),
 }
 
 #[derive(Debug, Clone)]

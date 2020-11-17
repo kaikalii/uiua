@@ -273,6 +273,8 @@ pub enum ResolutionError {
         Delete or rename one of them"
     )]
     NameAndSignatureExist { ident: Ident, sig: Signature },
+    #[error("Unknown module {0}")]
+    UnknownModule(String),
 }
 
 fn format_state(types: &[Type]) -> String {
