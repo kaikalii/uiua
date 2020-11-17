@@ -300,13 +300,15 @@ impl Parser {
         })
     }
     /// Match an item
-    fn item(&mut self) -> Result<UnresolvedItem, ParseError> {
+    fn item(&mut self) -> Result<Option<UnresolvedItem>, ParseError> {
         let mut doc = String::new();
         while let Some(comment) = self.try_mat(TT::doc_comment) {
             doc += &comment;
             doc += "\n";
         }
-        if let Some(colon) = self.try_mat(TT::Colon) {
+        if self.unhashed().is_some() {
+            return Ok(None);
+        } else if let Some(colon) = self.try_mat(TT::Colon) {
             self.word(doc, colon).map(UnresolvedItem::Word)
         } else if self.try_mat(TT::Use).is_some() {
             let module = self.mat("module name", TT::ident)?;
@@ -314,10 +316,18 @@ impl Parser {
                 return Err(ParseErrorKind::DocCommentOnUse.span(module.span));
             }
             Ok(UnresolvedItem::Use(module))
-        } else {
-            let data = self.mat([":", "data", "use"].as_ref(), TT::Data)?;
+        } else if let Some(data) = self.try_mat(TT::Data) {
             self.data(data).map(UnresolvedItem::Data)
+        } else if let Some(token) = self.next_token() {
+            Err(ParseErrorKind::ExpectedFound {
+                expected: "':', 'data', 'use', or comment".into(),
+                found: token.tt,
+            }
+            .span(token.span))
+        } else {
+            return Ok(None);
         }
+        .map(Some)
     }
     fn expected<T, E: Expectation>(&mut self, expected: E) -> Result<T, ParseError> {
         Err(if let Some(token) = self.next_token() {
@@ -345,8 +355,9 @@ where
         loc: Loc::new(1, 1),
     };
     while !parser.tokens.as_slice().is_empty() {
-        let item = parser.item()?;
-        parser.items.push(item);
+        if let Some(item) = parser.item()? {
+            parser.items.push(item);
+        }
     }
     Ok(parser.items)
 }

@@ -215,7 +215,7 @@ pub fn resolve_sequence(
         })
         .unwrap_or_else(|| Signature::new(vec![], vec![]));
     if let Some(given) = given_sig {
-        if !given.is_subset_of(&sig) {
+        if given.data != sig {
             return Err(given.span.sp(ResolutionError::SignatureMismatch {
                 name: name.data.clone(),
                 expected: given.data.clone(),
