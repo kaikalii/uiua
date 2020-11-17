@@ -252,8 +252,11 @@ impl FromStr for Ident {
         }
         let mut iter = s.split('.');
         let first = iter.next().ok_or(IdentParseError)?;
+        if first.is_empty() {
+            return Err(IdentParseError);
+        }
         let second = iter.next();
-        let ident = if let Some(second) = second {
+        let ident = if let Some(second) = second.filter(|s| !s.is_empty()) {
             Ident::module(first, second)
         } else {
             Ident::no_module(first)

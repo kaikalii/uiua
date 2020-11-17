@@ -211,7 +211,6 @@ impl Parser {
             } else {
                 break;
             }
-            println!("{:?}", nodes.last().unwrap().data);
         }
         Ok(nodes)
     }

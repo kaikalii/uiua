@@ -150,7 +150,9 @@ impl Codebase {
         println!();
         // Determine if looking through idents or modules
         let iom = if let Some(path) = path {
-            if path.contains('.') {
+            if path == "." {
+                IdentOrModule::Module(None)
+            } else if path.contains('.') {
                 if let Ok(ident) = path.parse::<Ident>() {
                     if let (true, Some(module)) = (ident.module.is_none(), &self.path) {
                         IdentOrModule::Ident(Ident::module(module.clone(), ident.name))
@@ -169,7 +171,7 @@ impl Codebase {
             }) {
                 IdentOrModule::Module(Some(path))
             } else {
-                IdentOrModule::Ident(Ident::no_module(path))
+                IdentOrModule::Ident(Ident::new(self.path.clone(), path))
             }
         } else {
             IdentOrModule::Module(self.path.clone())
@@ -265,7 +267,10 @@ impl Codebase {
         let text = fs::read_to_string(&path)?;
         let mut file = fs::OpenOptions::new().write(true).open(&path)?;
         // Build edit string
-        let edit_string = if let Some(ident) = ident {
+        let edit_string = if let Some(mut ident) = ident {
+            if ident.module.is_none() {
+                ident.module = self.path.clone();
+            }
             let word_entries: Vec<_> = self
                 .defs
                 .words
