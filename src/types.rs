@@ -5,6 +5,7 @@ use std::{
 };
 
 use colored::*;
+use itertools::*;
 use serde::*;
 use sha3::*;
 
@@ -176,6 +177,7 @@ pub enum Primitive<T = Type> {
     Text,
     List(Box<T>),
     Quotation(Signature<T>),
+    Tuple(Vec<T>),
 }
 
 pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>>;
@@ -224,6 +226,15 @@ impl fmt::Display for Primitive {
             Primitive::Text => "Text".fmt(f),
             Primitive::List(inner) => write!(f, "[{}]", inner),
             Primitive::Quotation(sig) => fmt::Display::fmt(sig, f),
+            Primitive::Tuple(types) => write!(
+                f,
+                "({})",
+                types
+                    .iter()
+                    .map(ToString::to_string)
+                    .intersperse(" ".into())
+                    .collect::<String>()
+            ),
         }
     }
 }
@@ -598,7 +609,7 @@ fn format_ty(ty: &Type, s: &mut String, i: usize) {
 impl Signature {
     fn format(&self, s: &mut String, i: usize) {
         let color = SIG_COLORS[i % SIG_COLORS.len()];
-        s.push_str(&"( ".color(color).to_string());
+        s.push_str(&"[ ".color(color).to_string());
         for ty in &self.before {
             format_ty(ty, s, i + 1);
             s.push(' ');
@@ -608,7 +619,7 @@ impl Signature {
             format_ty(ty, s, i + 1);
             s.push(' ');
         }
-        s.push_str(&")".color(color).to_string())
+        s.push_str(&"]".color(color).to_string())
     }
 }
 

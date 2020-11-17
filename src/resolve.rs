@@ -354,6 +354,12 @@ pub fn resolve_prim(
         Primitive::Quotation(sig) => {
             Primitive::Quotation(resolve_sig(&span.sp(sig.clone()), defs, params)?.data)
         }
+        Primitive::Tuple(types) => Primitive::Tuple(
+            types
+                .iter()
+                .map(|ty| resolve_concrete_type(ty, defs, params))
+                .collect::<Result<_, _>>()?,
+        ),
     })
 }
 

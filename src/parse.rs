@@ -9,13 +9,15 @@ pub enum ParseErrorKind {
     #[error("Expected {0}")]
     Expected(String),
     #[error("Expected {expected}, but found '{found}'")]
-    ExpectedFound { expected: String, found: TT },
+    ExpectedFound { expected: String, found: String },
     #[error("Expected signature because of type parameters")]
     ExpectedSignature,
     #[error("{0}")]
     IdentParse(#[from] IdentParseError),
     #[error("Cannot apply doc comments to use statements")]
     DocCommentOnUse,
+    #[error("Lists must have exactly one type, and quotations require a '--'")]
+    InvalidListOrQuotation,
 }
 
 impl ParseErrorKind {
@@ -38,6 +40,11 @@ impl From<LexError> for ParseError {
             span: e.span,
         }
     }
+}
+
+enum SigOrList {
+    Sig(UnresolvedSignature),
+    List(Sp<UnresolvedType>),
 }
 
 struct Parser {
@@ -79,7 +86,7 @@ impl Parser {
             self.put_back = Some(token.clone());
             Err(ParseErrorKind::ExpectedFound {
                 expected: expected.expected(),
-                found: token.tt,
+                found: token.tt.to_string(),
             }
             .span(token.span))
         }
@@ -128,15 +135,13 @@ impl Parser {
                 (None, "Text") => UnresolvedType::Prim(Primitive::Text),
                 _ => UnresolvedType::Ident(ident.data),
             }))
-        } else if let Some(open_bracket) = self.try_mat(TT::OpenBracket) {
-            let start = open_bracket.span.start;
-            let ty = self.ty()?;
-            let end = self.mat("]", TT::CloseBracket)?.span.end;
-            Some(Span::new(start, end).sp(UnresolvedType::Prim(Primitive::List(Box::new(ty)))))
-        } else if let Some(sig) = self.sig()? {
-            Some(sig.map(|sig| UnresolvedType::Prim(Primitive::Quotation(sig))))
+        } else if let Some(sig_or_list) = self.sig_or_list()? {
+            Some(sig_or_list.map(|sol| match sol {
+                SigOrList::Sig(sig) => UnresolvedType::Prim(Primitive::Quotation(sig)),
+                SigOrList::List(inner) => UnresolvedType::Prim(Primitive::List(Box::new(inner))),
+            }))
         } else {
-            return Ok(None);
+            None
         })
     }
     /// Match a type
@@ -164,28 +169,51 @@ impl Parser {
         }
         Ok(Span::new(start, end).sp(names))
     }
-    /// Match a type signature
-    fn sig(&mut self) -> Result<Option<Sp<UnresolvedSignature>>, ParseError> {
-        Ok(if let Some(open_paren) = self.try_mat(TT::OpenParen) {
+    /// Match a type signature or a list
+    fn sig_or_list(&mut self) -> Result<Option<Sp<SigOrList>>, ParseError> {
+        Ok(if let Some(open_paren) = self.try_mat(TT::OpenBracket) {
             let start = open_paren.span.start;
+            let mut end = start;
             // Match before args types
             let mut before = Vec::new();
             while let Some(ty) = self.try_ty()? {
+                end = ty.span.end;
                 before.push(ty);
             }
             // Match double dash
-            self.mat("--", TT::DoubleDash)?;
-            // Match after args types
-            let mut after = Vec::new();
-            while let Some(ty) = self.try_ty()? {
-                after.push(ty);
-            }
+            let sig_or_list = if self.try_mat(TT::DoubleDash).is_some() {
+                // Match after args types
+                let mut after = Vec::new();
+                while let Some(ty) = self.try_ty()? {
+                    after.push(ty);
+                }
+                SigOrList::Sig(Signature::new_unresolved(before, after))
+            } else if before.len() == 1 {
+                SigOrList::List(before.remove(0))
+            } else {
+                return Err(ParseErrorKind::InvalidListOrQuotation.span(Span::new(start, end)));
+            };
             // Match closing paren
-            let end = self.mat(')', TT::CloseParen)?.span.end;
-            Some(Span::new(start, end).sp(Signature::new_unresolved(before, after)))
+            end = self.mat(']', TT::CloseBracket)?.span.end;
+            Some(Span::new(start, end).sp(sig_or_list))
         } else {
             None
         })
+    }
+    /// Match a type signature
+    fn sig(&mut self) -> Result<Option<Sp<UnresolvedSignature>>, ParseError> {
+        if let Some(sig_or_list) = self.sig_or_list()? {
+            match sig_or_list.data {
+                SigOrList::Sig(sig) => Ok(Some(sig_or_list.span.sp(sig))),
+                SigOrList::List(_) => Err(ParseErrorKind::ExpectedFound {
+                    expected: "signature".into(),
+                    found: "list type".into(),
+                }
+                .span(sig_or_list.span)),
+            }
+        } else {
+            Ok(None)
+        }
     }
     /// Match a sequence of words
     fn seq(&mut self) -> Result<Vec<Sp<UnresolvedNode>>, ParseError> {
@@ -321,7 +349,7 @@ impl Parser {
         } else if let Some(token) = self.next_token() {
             Err(ParseErrorKind::ExpectedFound {
                 expected: "':', 'type', 'use', or comment".into(),
-                found: token.tt,
+                found: token.tt.to_string(),
             }
             .span(token.span))
         } else {
@@ -333,7 +361,7 @@ impl Parser {
         Err(if let Some(token) = self.next_token() {
             ParseErrorKind::ExpectedFound {
                 expected: expected.expected(),
-                found: token.tt,
+                found: token.tt.to_string(),
             }
             .span(token.span)
         } else {
