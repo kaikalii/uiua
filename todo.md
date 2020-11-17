@@ -1,4 +1,6 @@
-- Data
+- Finish type aliases
 - Runtime
-- Use statements
+- Dealias command
+- Purity in signatures
+- Reisters
 - Lots more builtins

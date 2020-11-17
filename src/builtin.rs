@@ -92,10 +92,10 @@ impl BuiltinWord {
         let tuple_compose = (2..=8).map(BuiltinWord::TupleCompose);
         let tuple_decompose = (2..=8).map(BuiltinWord::TupleDecompose);
         let tuple_get = (2..=8)
-            .map(|size| (0..2).map(move |n| BuiltinWord::TupleGet(size, n)))
+            .map(|size| (0..size).map(move |n| BuiltinWord::TupleGet(size, n)))
             .flatten();
         let tuple_set = (2..=8)
-            .map(|size| (0..2).map(move |n| BuiltinWord::TupleSet(size, n)))
+            .map(|size| (0..size).map(move |n| BuiltinWord::TupleSet(size, n)))
             .flatten();
         call.chain(tuple_compose)
             .chain(tuple_decompose)
@@ -129,7 +129,10 @@ impl BuiltinWord {
             BuiltinWord::TupleSet(size, n) => {
                 let params: Vec<_> = DefaultParams::default().take(*size as usize).collect();
                 let input = params[*n as usize].clone();
-                (vec![input], vec![Primitive::Tuple(params).into()])
+                (
+                    vec![Primitive::Tuple(params.clone()).into(), input],
+                    vec![Primitive::Tuple(params).into()],
+                )
             }
             BuiltinWord::If => (vec![Primitive::Bool.into(), a(), a()], vec![a()]),
             BuiltinWord::Dup => (vec![a()], vec![a(); 2]),
