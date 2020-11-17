@@ -5,9 +5,10 @@ use crate::{ast::*, codebase::*, span::*, types::*};
 pub fn resolve_item(
     item: &UnresolvedItem,
     path: &Option<String>,
-    read_defs: &Defs,
+    read_defs: Option<&Defs>,
     write_defs: &mut Defs,
 ) -> SpResult<(), ResolutionError> {
+    let read_defs = read_defs.unwrap_or(write_defs);
     match &item {
         // Uses
         UnresolvedItem::Use(module) => {

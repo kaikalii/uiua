@@ -129,7 +129,7 @@ impl Codebase {
         loop {
             errors = unresolved_items
                 .iter()
-                .filter_map(|item| resolve_item(item, &self.path, &self.defs, &mut temp_defs).err())
+                .filter_map(|item| resolve_item(item, &self.path, None, &mut temp_defs).err())
                 .collect();
             if errors.len() == errors_len {
                 break;
@@ -138,7 +138,7 @@ impl Codebase {
         }
         if errors.is_empty() {
             for item in unresolved_items {
-                resolve_item(&item, &self.path, &temp_defs, &mut self.defs).unwrap();
+                resolve_item(&item, &self.path, Some(&temp_defs), &mut self.defs).unwrap();
             }
         }
         comp.errors
