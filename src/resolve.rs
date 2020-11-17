@@ -126,8 +126,8 @@ pub fn resolve_sequence(
                     sub_nodes.into_iter().map(|node| node.data).collect(),
                 )));
             }
-            UnresolvedNode::WhiteSpace(c) => {
-                resolved_nodes.push(node.span.sp(Node::WhiteSpace(*c)))
+            UnresolvedNode::WhiteSpace(s) => {
+                resolved_nodes.push(node.span.sp(Node::WhiteSpace(s.clone())))
             }
         }
     }

@@ -29,7 +29,7 @@ pub enum TT {
     Colon,
     Equals,
     Data,
-    WhiteSpace(char),
+    WhiteSpace(String),
 }
 
 impl TT {
@@ -51,9 +51,9 @@ impl TT {
             _ => return None,
         })
     }
-    pub fn whitespace(self) -> Option<char> {
-        if let TT::WhiteSpace(c) = self {
-            Some(c)
+    pub fn whitespace(self) -> Option<String> {
+        if let TT::WhiteSpace(s) = self {
+            Some(s)
         } else {
             None
         }
@@ -81,7 +81,7 @@ impl fmt::Display for TT {
             TT::Equals => "=".fmt(f),
             TT::Data => "data".fmt(f),
             TT::Period => ".".fmt(f),
-            TT::WhiteSpace(c) => c.fmt(f),
+            TT::WhiteSpace(s) => s.fmt(f),
         }
     }
 }
@@ -275,8 +275,19 @@ where
             }
             ':' => TT::Colon,
             '=' => TT::Equals,
-            '\n' | '\t' => TT::WhiteSpace(c),
-            c if c.is_whitespace() => return self.next_token(),
+            c if c.is_whitespace() => {
+                let mut s = String::from(c);
+                while let Some(Ok(c)) = self.peek() {
+                    let c = *c;
+                    if c.is_whitespace() {
+                        self.next_char()?;
+                        s.push(c);
+                    } else {
+                        break;
+                    }
+                }
+                TT::WhiteSpace(s)
+            }
             // Idents and others
             c if ident_char(c) => {
                 let mut s: String = c.into();

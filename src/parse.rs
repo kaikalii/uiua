@@ -42,6 +42,7 @@ struct Parser {
     tokens: std::vec::IntoIter<Token>,
     put_back: Option<Token>,
     items: Vec<UnresolvedItem>,
+    whitespace: Option<Sp<String>>,
     loc: Loc,
 }
 
@@ -64,7 +65,13 @@ impl Parser {
         if let Some(res) = transform.transform(token.tt.clone()) {
             self.loc = token.span.end;
             Ok(token.span.sp(res))
-        } else if let TT::WhiteSpace(_) = token.tt {
+        } else if let TT::WhiteSpace(s) = token.tt {
+            let span = Span::new(self.loc, self.loc);
+            let whitespace = self
+                .whitespace
+                .get_or_insert_with(|| span.sp(String::new()));
+            whitespace.push_str(&s);
+            whitespace.span.end = self.loc;
             self.mat(expected, transform)
         } else {
             self.put_back = Some(token.clone());
@@ -77,6 +84,21 @@ impl Parser {
     }
     fn try_mat<T: TTTransform>(&mut self, transform: T) -> Option<Sp<T::Output>> {
         self.mat("", transform).ok()
+    }
+    fn clear_whitespace(&mut self) {
+        self.whitespace = None;
+    }
+    /// Try to match some whitespace
+    fn whitespace(&mut self) -> Option<Sp<String>> {
+        if let Some(first) = self.whitespace.take() {
+            Some(if let Some(second) = self.try_mat(TT::whitespace) {
+                (first.span - second.span).sp(first.data + &second.data)
+            } else {
+                first
+            })
+        } else {
+            self.try_mat(TT::whitespace)
+        }
     }
     /// Match an identifier
     fn ident(&mut self) -> Result<Option<Sp<Ident>>, ParseError> {
@@ -167,13 +189,17 @@ impl Parser {
     fn seq(&mut self) -> Result<Vec<Sp<UnresolvedNode>>, ParseError> {
         let mut nodes = Vec::new();
         loop {
-            if let Some(whitespace) = self.try_mat(TT::whitespace) {
+            if let Some(whitespace) = self.whitespace() {
                 nodes.push(whitespace.map(UnresolvedNode::WhiteSpace))
             } else if let Some(node) = self.try_mat(TT::node) {
                 nodes.push(node);
             } else if let Some(ident) = self.ident()? {
                 nodes.push(ident.map(UnresolvedNode::Ident));
             } else if self.try_mat(TT::OpenBracket).is_some() {
+                self.clear_whitespace();
+                if let Some(whitespace) = self.whitespace() {
+                    nodes.push(whitespace.map(UnresolvedNode::WhiteSpace))
+                }
                 let sub_nodes = self.seq()?;
                 let span = sub_nodes
                     .first()
@@ -185,6 +211,7 @@ impl Parser {
             } else {
                 break;
             }
+            println!("{:?}", nodes.last().unwrap().data);
         }
         Ok(nodes)
     }
@@ -202,6 +229,7 @@ impl Parser {
         }
         // Match equals sign
         self.mat('=', TT::Equals)?;
+        self.clear_whitespace();
         // Match the nodes
         let nodes = self.seq()?;
         Ok(Span::new(start, self.loc).sp(UnresolvedWord {
@@ -300,6 +328,7 @@ where
         tokens: tokens.into_iter(),
         put_back: None,
         items: Vec::new(),
+        whitespace: None,
         loc: Loc::new(1, 1),
     };
     while !parser.tokens.as_slice().is_empty() {

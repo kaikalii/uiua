@@ -182,9 +182,16 @@ impl Codebase {
         let _ = stdout().flush();
     }
     pub fn cd(&mut self, new_path: &str) {
+        let mut uses = self.defs.uses.lock().unwrap();
+        if let Some(path) = self.path.take() {
+            uses.remove(&path);
+        }
         self.path = match new_path {
             "." | ".." => None,
-            s => Some(s.into()),
+            s => {
+                uses.insert(s.into());
+                Some(s.into())
+            }
         };
     }
 }
@@ -221,6 +228,7 @@ pub type Uses = Arc<Mutex<BTreeSet<String>>>;
 
 #[derive(Debug, Clone)]
 pub struct Defs {
+    pub uses: Uses,
     pub words: ItemDefs<Word>,
     pub types: ItemDefs<Type>,
 }
@@ -238,6 +246,7 @@ impl Defs {
         let defs = Defs {
             words: ItemDefs::new(top_dir, &uses)?,
             types: ItemDefs::new(top_dir, &uses)?,
+            uses,
         };
         Ok(defs)
     }

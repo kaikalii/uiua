@@ -347,18 +347,15 @@ impl Signature {
     /// Get a version of this signature with incremented generic indices
     /// that make it distinct from another signature
     pub fn exclusive_params(&self, other: &Self) -> Self {
-        let add_to_b = self.generics().last().copied().unwrap_or(0)
-            - other.generics().first().copied().unwrap_or(0)
-            + 1;
+        let a_max = self.generics().last().copied().unwrap_or(0);
+        let b_min = other.generics().first().copied().unwrap_or(0);
+        let add_to_b = if a_max >= b_min {
+            a_max - b_min + 1
+        } else {
+            return other.clone();
+        };
         let mut res = other.clone();
-        for ty in &mut res.before {
-            ty.mutate(&mut |ty| {
-                if let Type::Generic(g) = ty {
-                    g.index += add_to_b;
-                }
-            });
-        }
-        for ty in &mut res.after {
+        for ty in res.before.iter_mut().chain(&mut res.after) {
             ty.mutate(&mut |ty| {
                 if let Type::Generic(g) = ty {
                     g.index += add_to_b;

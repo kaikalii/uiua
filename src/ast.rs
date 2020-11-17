@@ -1,7 +1,6 @@
 use std::{convert::*, fmt, mem, str::FromStr};
 
 use colored::*;
-use itertools::*;
 use serde::*;
 use sha3::*;
 
@@ -129,7 +128,7 @@ pub enum Node {
     SelfIdent,
     Quotation(Vec<Node>),
     Literal(Literal),
-    WhiteSpace(char),
+    WhiteSpace(String),
 }
 
 impl Node {
@@ -149,11 +148,10 @@ impl Node {
                     .and_then(|entry| entry.names.iter().next().map(ToString::to_string))
                     .unwrap_or_else(|| hash.to_string()[0..8].into()),
                 Node::SelfIdent => word_name.into(),
-                Node::Quotation(nodes) => format!("[ {} ]", Node::format(nodes, word_name, words)),
+                Node::Quotation(nodes) => format!("[ {}]", Node::format(nodes, word_name, words)),
                 Node::Literal(lit) => lit.to_string(),
                 Node::WhiteSpace(c) => c.to_string(),
             })
-            .intersperse(" ".into())
             .collect::<String>()
     }
 }
@@ -276,7 +274,7 @@ pub enum UnresolvedNode {
     Ident(Ident),
     Quotation(Vec<Sp<UnresolvedNode>>),
     Literal(Literal),
-    WhiteSpace(char),
+    WhiteSpace(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
