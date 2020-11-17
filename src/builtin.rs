@@ -44,13 +44,13 @@ builtin_words!(
     Dup,
     /// Push a new list
     List,
-    /// Push an item to the back of the list below it
+    /// Append an item to the list below it
     ListPushBack,
-    /// Pop an item from the back of a list
+    /// Remove an item from the back of a list
     ListPopBack,
-    /// Push an item to the front of the list below it
+    /// Prepend an item to the list below it
     ListPushFront,
-    /// Pop an item from the front of a list
+    /// Remove an item from the front of a list
     ListPopFront,
     /// Swap the top 2 items
     Swap,
