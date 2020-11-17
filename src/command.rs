@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Write},
     path::PathBuf,
@@ -193,7 +193,7 @@ impl Codebase {
         }
         // Words
         if query.words() {
-            let mut word_data = Vec::new();
+            let mut word_data: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
             match iom {
                 IdentOrModule::Module(path) => {
                     for (ident, hashes) in &self.defs.words.names.0 {
@@ -204,18 +204,23 @@ impl Codebase {
                                     .words
                                     .entry_by_hash(hash, Query::Saved)
                                     .expect("name refers to invalid hash");
-                                word_data.push((ident.clone(), entry.item.sig.to_string(), *hash));
+                                word_data
+                                    .entry((ident.clone(), entry.item.doc.clone()))
+                                    .or_default()
+                                    .insert(entry.item.sig.to_string());
                             }
                         }
                     }
                 }
                 IdentOrModule::Ident(ident) => {
-                    for (hash, entry) in self.defs.words.entries_by_ident(&ident, Query::Saved) {
-                        word_data.push((ident.clone(), entry.item.sig.to_string(), hash));
+                    for (_, entry) in self.defs.words.entries_by_ident(&ident, Query::Saved) {
+                        word_data
+                            .entry((ident.clone(), entry.item.doc.clone()))
+                            .or_default()
+                            .insert(entry.item.sig.to_string());
                     }
                 }
             }
-            word_data.sort();
             if !word_data.is_empty() {
                 println!("{}", "Words".bright_white().bold());
             }
@@ -223,33 +228,45 @@ impl Codebase {
         }
         println!();
     }
-    fn print_word_data(&mut self, word_data: Vec<(Ident, String, Hash)>, track_i: &mut usize) {
+    fn print_word_data(
+        &self,
+        word_data: BTreeMap<(Ident, String), BTreeSet<String>>,
+        track_i: &mut usize,
+    ) {
         let max_ident_len = word_data
             .iter()
-            .map(|(ident, ..)| ident.to_string().len())
+            .map(|((ident, _), _)| ident.to_string().len())
             .max()
             .unwrap_or(0);
+        let module_color = Color::TrueColor {
+            r: 128,
+            g: 127,
+            b: 140,
+        };
         let pad_diff =
-            "".bright_white().bold().to_string().len() + "".bright_black().to_string().len();
-        self.defs.words.tracker.clear();
-        for (ident, sig, hash) in word_data {
-            println!(
-                "{:>3}. {:pad$} {}",
-                track_i,
-                format!(
-                    "{}{}",
-                    if let Some(m) = ident.module {
-                        format!("{}.", m)
-                    } else {
-                        String::new()
-                    }
-                    .bright_black(),
-                    ident.name.bright_white().bold()
-                ),
-                sig,
-                pad = max_ident_len + pad_diff
-            );
-            self.defs.words.tracker.insert(*track_i, hash);
+            "".bright_white().bold().to_string().len() + "".color(module_color).to_string().len();
+        for ((ident, doc), sigs) in word_data {
+            for line in doc.lines() {
+                println!("     {}", line.trim().bright_black());
+            }
+            for sig in sigs {
+                println!(
+                    "{:>3}. {:pad$} {}",
+                    track_i,
+                    format!(
+                        "{}{}",
+                        if let Some(m) = &ident.module {
+                            format!("{}.", m)
+                        } else {
+                            String::new()
+                        }
+                        .color(module_color),
+                        ident.name.bright_white().bold()
+                    ),
+                    sig,
+                    pad = max_ident_len + pad_diff
+                );
+            }
             *track_i += 1;
         }
     }

@@ -29,6 +29,8 @@ pub enum TT {
     Colon,
     Equals,
     Data,
+    DocComment(String),
+    Comment(String),
     WhiteSpace(String),
 }
 
@@ -58,6 +60,20 @@ impl TT {
             None
         }
     }
+    pub fn comment(self) -> Option<String> {
+        if let TT::Comment(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+    pub fn doc_comment(self) -> Option<String> {
+        if let TT::DocComment(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
 }
 
 impl fmt::Display for TT {
@@ -82,6 +98,8 @@ impl fmt::Display for TT {
             TT::Data => "data".fmt(f),
             TT::Period => ".".fmt(f),
             TT::WhiteSpace(s) => s.fmt(f),
+            TT::Comment(s) => write!(f, "` {}", s),
+            TT::DocComment(s) => write!(f, "`` {}", s),
         }
     }
 }
@@ -275,6 +293,36 @@ where
             }
             ':' => TT::Colon,
             '=' => TT::Equals,
+            '`' => {
+                let is_doc = if let Some(Ok('`')) = self.peek() {
+                    self.next_char()?;
+                    true
+                } else {
+                    false
+                };
+                let mut comment = String::new();
+                let mut hit_non_whitespace = false;
+                while let Some(Ok(c)) = self.peek() {
+                    let c = *c;
+                    if c == '\n' {
+                        break;
+                    }
+                    self.next_char()?;
+                    if c.is_whitespace() {
+                        if !hit_non_whitespace {
+                            continue;
+                        }
+                    } else {
+                        hit_non_whitespace = true;
+                    }
+                    comment.push(c);
+                }
+                if is_doc {
+                    TT::DocComment(comment)
+                } else {
+                    TT::Comment(comment)
+                }
+            }
             c if c.is_whitespace() => {
                 let mut s = String::from(c);
                 while let Some(Ok(c)) = self.peek() {

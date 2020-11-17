@@ -1,7 +1,5 @@
-- finish edit command
+- Use use pending before saved words
 - Data
-- use brackets for quotation types?
-- Comments
 - Runtime
 - Use statements
 - Lots more builtins

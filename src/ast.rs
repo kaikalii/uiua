@@ -75,6 +75,7 @@ where
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Word {
+    pub doc: String,
     pub sig: Signature,
     #[serde(rename = "body")]
     pub kind: WordKind,
@@ -98,6 +99,7 @@ impl TreeHash for Word {
 impl From<BuiltinWord> for Word {
     fn from(builtin: BuiltinWord) -> Self {
         Word {
+            doc: builtin.doc(),
             sig: builtin.sig(),
             kind: WordKind::Builtin(builtin),
         }
@@ -128,7 +130,7 @@ pub enum Node {
     SelfIdent,
     Quotation(Vec<Node>),
     Literal(Literal),
-    WhiteSpace(String),
+    Unhashed(Unhashed),
 }
 
 impl Node {
@@ -150,7 +152,7 @@ impl Node {
                 Node::SelfIdent => word_name.into(),
                 Node::Quotation(nodes) => format!("[ {}]", Node::format(nodes, word_name, words)),
                 Node::Literal(lit) => lit.to_string(),
-                Node::WhiteSpace(c) => c.to_string(),
+                Node::Unhashed(unhashed) => unhashed.to_string(),
             })
             .collect::<String>()
     }
@@ -158,7 +160,7 @@ impl Node {
 
 impl TreeHash for Node {
     fn hash(&self, sha: &mut Sha3_256) {
-        if let Node::WhiteSpace(_) = self {
+        if let Node::Unhashed(_) = self {
             return;
         }
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
@@ -170,7 +172,22 @@ impl TreeHash for Node {
                 }
             }
             Node::Literal(lit) => lit.hash(sha),
-            Node::SelfIdent | Node::WhiteSpace(_) => {}
+            Node::SelfIdent | Node::Unhashed(_) => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Unhashed {
+    WhiteSpace(String),
+    Comment(String),
+}
+
+impl fmt::Display for Unhashed {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Unhashed::WhiteSpace(s) => s.fmt(f),
+            Unhashed::Comment(s) => write!(f, "` {}", s),
         }
     }
 }
@@ -184,6 +201,7 @@ pub enum UnresolvedItem {
 #[derive(Debug, Clone)]
 pub struct UnresolvedWord {
     pub name: Sp<String>,
+    pub doc: String,
     pub params: Sp<UnresolvedParams>,
     pub sig: Option<Sp<UnresolvedSignature>>,
     pub nodes: Vec<Sp<UnresolvedNode>>,
@@ -277,7 +295,7 @@ pub enum UnresolvedNode {
     Ident(Ident),
     Quotation(Vec<Sp<UnresolvedNode>>),
     Literal(Literal),
-    WhiteSpace(String),
+    Unhashed(Unhashed),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

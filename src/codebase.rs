@@ -456,7 +456,6 @@ pub struct ItemDefs<T> {
     pub(crate) names: NameIndex<T>,
     pub(crate) hashes: BTreeMap<Ident, BTreeSet<Hash>>,
     pub(crate) entries: ItemEntries<T>,
-    pub(crate) tracker: BTreeMap<usize, Hash>,
 }
 
 pub type ItemEntries<T> = BTreeMap<Hash, ItemEntry<T>>;
@@ -472,7 +471,6 @@ where
             names: NameIndex::load(top_dir)?,
             hashes: BTreeMap::new(),
             entries: BTreeMap::new(),
-            tracker: BTreeMap::new(),
         })
     }
     pub fn reset(&mut self) {

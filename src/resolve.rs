@@ -11,6 +11,7 @@ pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &mut Defs) -> SpResult<Word
     let given_sig = given_sig.as_ref();
     let (nodes, sig) = resolve_sequence(&word.nodes, defs, &word.name, given_sig)?;
     Ok(Word {
+        doc: word.doc.clone(),
         sig,
         kind: WordKind::Uiua(nodes.into_iter().map(|n| n.data).collect()),
     })
@@ -126,8 +127,8 @@ pub fn resolve_sequence(
                     sub_nodes.into_iter().map(|node| node.data).collect(),
                 )));
             }
-            UnresolvedNode::WhiteSpace(s) => {
-                resolved_nodes.push(node.span.sp(Node::WhiteSpace(s.clone())))
+            UnresolvedNode::Unhashed(s) => {
+                resolved_nodes.push(node.span.sp(Node::Unhashed(s.clone())))
             }
         }
     }
