@@ -2,6 +2,65 @@ use itertools::*;
 
 use crate::{ast::*, codebase::*, span::*, types::*};
 
+pub fn resolve_item(
+    item: &UnresolvedItem,
+    defs: &mut Defs,
+    path: &Option<String>,
+    insert: bool,
+) -> SpResult<(), ResolutionError> {
+    match &item {
+        // Uses
+        UnresolvedItem::Use(module) => {
+            let module_exists = defs
+                .words
+                .names
+                .0
+                .keys()
+                .any(|ident| ident.module.as_ref().map_or(false, |m| m == &module.data))
+                || defs
+                    .types
+                    .names
+                    .0
+                    .keys()
+                    .any(|ident| ident.module.as_ref().map_or(false, |m| m == &module.data));
+            if module_exists {
+                defs.uses.lock().unwrap().insert(module.data.clone());
+                Ok(())
+            } else {
+                Err(module.clone().map(ResolutionError::UnknownModule))
+            }
+        }
+        // Words
+        UnresolvedItem::Word(uw) => {
+            let word = resolve_word(&uw, defs)?;
+            let ident = Ident::new(path.clone(), uw.name.data.clone());
+            let hash = word.hash_finish(&defs.words);
+            // Check for identical word
+            if defs
+                .words
+                .joint_ident_and_sig(&ident, &word.sig, Query::Pending)
+                .any(|h| h != hash)
+            {
+                let error_span = if let Some(unres_sig) = &uw.sig {
+                    uw.name.span - unres_sig.span
+                } else {
+                    uw.name.span
+                };
+                return Err(error_span.sp(ResolutionError::NameAndSignatureExist {
+                    ident,
+                    sig: word.sig,
+                }));
+            }
+            if insert {
+                defs.words.insert(ident, word);
+            }
+            Ok(())
+        }
+        // Datas
+        UnresolvedItem::Data(_ud) => todo!(),
+    }
+}
+
 pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &mut Defs) -> SpResult<Word, ResolutionError> {
     let given_sig = if let Some(sig) = &word.sig {
         Some(resolve_sig(sig, defs, &word.params)?)
@@ -60,9 +119,19 @@ pub fn resolve_sequence(
                         sig.clone().map(|sig| sig.data)
                     };
                     let hash = if let Some(sig) = &sig_for_lookup {
-                        let matching_idents =
+                        // Use the signature to find a matching word
+                        let mut matching_words =
                             defs.words.by_ident_matching_sig(ident, &sig, Query::All);
-                        if matching_idents.is_empty() {
+                        // Try to use only pending if there are too many words
+                        if matching_words.len() > 1 {
+                            let only_pending =
+                                defs.words
+                                    .by_ident_matching_sig(ident, &sig, Query::Pending);
+                            if !only_pending.is_empty() {
+                                matching_words = only_pending;
+                            }
+                        }
+                        if matching_words.is_empty() {
                             return if defs.words.entries_by_ident(ident, Query::All).count() > 0 {
                                 Err(node.span.sp(ResolutionError::IncompatibleWord {
                                     ident: ident.clone(),
@@ -71,18 +140,25 @@ pub fn resolve_sequence(
                             } else {
                                 Err(node.span.sp(ResolutionError::UnknownWord(ident.clone())))
                             };
-                        } else if matching_idents.len() > 1 {
+                        } else if matching_words.len() > 1 {
                             return Err(node.span.sp(ResolutionError::MultipleMatchingWords {
                                 ident: ident.clone(),
                             }));
                         }
-                        matching_idents[0].0
+                        matching_words[0].0
                     } else {
-                        let hashes: Vec<_> = defs
+                        let mut hashes: Vec<_> = defs
                             .words
                             .entries_by_ident(ident, Query::All)
                             .map(|(hash, _)| hash)
                             .collect();
+                        if hashes.len() > 1 {
+                            hashes = defs
+                                .words
+                                .entries_by_ident(ident, Query::Pending)
+                                .map(|(hash, _)| hash)
+                                .collect()
+                        }
                         if hashes.len() == 1 {
                             hashes[0]
                         } else {

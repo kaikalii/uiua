@@ -1,4 +1,4 @@
-- Use use pending before saved words
+- Use pending before saved words
 - Data
 - Runtime
 - Use statements

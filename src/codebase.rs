@@ -107,15 +107,16 @@ impl Codebase {
             code: String::from_utf8_lossy(&buffer).into_owned(),
         };
         // Parse and collect unresolved items
-        let mut unresolved_items: Vec<_> = match parse(buffer.as_slice()) {
-            Ok(uw) => uw.into_iter().map(|ud| (ud, None)).collect(),
+        let unresolved_items: Vec<_> = match parse(buffer.as_slice()) {
+            Ok(items) => items,
             Err(e) => {
                 comp.errors.push(e.span.sp(CompileError::Parse(e.kind)));
                 self.comp = Some(comp);
                 return Ok(());
             }
         };
-        let mut last_len = 0;
+        let mut errors_len = 0;
+        let mut errors: Vec<_>;
         // Set defs uses
         *self.defs.uses.lock().unwrap() = PRELUDE
             .iter()
@@ -123,70 +124,25 @@ impl Codebase {
             .map(Into::into)
             .chain(self.path.clone())
             .collect();
-        // Try to resolve each item until the number that has been resolved does not change
+        // Try to resolve each item until the number of errors does not change
         loop {
-            unresolved_items = unresolved_items
-                .into_iter()
-                .filter_map(|(unresolved, _)| match &unresolved {
-                    // Uses
-                    UnresolvedItem::Use(module) => {
-                        let module_exists = self.defs.words.names.0.keys().any(|ident| {
-                            ident.module.as_ref().map_or(false, |m| m == &module.data)
-                        }) || self.defs.types.names.0.keys().any(|ident| {
-                            ident.module.as_ref().map_or(false, |m| m == &module.data)
-                        });
-                        if module_exists {
-                            self.defs.uses.lock().unwrap().insert(module.data.clone());
-                            None
-                        } else {
-                            let error = module.clone().map(ResolutionError::UnknownModule);
-                            Some((unresolved, Some(error)))
-                        }
-                    }
-                    // Words
-                    UnresolvedItem::Word(uw) => match resolve_word(&uw, &mut self.defs) {
-                        Ok(word) => {
-                            let ident = Ident::new(self.path.clone(), uw.name.data.clone());
-                            let hash = word.hash_finish(&self.defs.words);
-                            // Check for identical word
-                            if self
-                                .defs
-                                .words
-                                .joint_ident_and_sig(&ident, &word.sig, Query::Pending)
-                                .any(|h| h != hash)
-                            {
-                                let error_span = if let Some(unres_sig) = &uw.sig {
-                                    uw.name.span - unres_sig.span
-                                } else {
-                                    uw.name.span
-                                };
-                                return Some((
-                                    unresolved,
-                                    Some(error_span.sp(ResolutionError::NameAndSignatureExist {
-                                        ident,
-                                        sig: word.sig,
-                                    })),
-                                ));
-                            }
-                            self.defs.words.insert(ident, word);
-                            None
-                        }
-                        Err(e) => Some((unresolved, Some(e))),
-                    },
-                    // Datas
-                    UnresolvedItem::Data(_ud) => todo!(),
-                })
+            errors = unresolved_items
+                .iter()
+                .filter_map(|item| resolve_item(item, &mut self.defs, &self.path, false).err())
                 .collect();
-            if unresolved_items.len() == last_len {
+            if errors.len() == errors_len {
                 break;
             }
-            last_len = unresolved_items.len();
+            errors_len = errors.len();
         }
-        comp.errors.extend(
-            unresolved_items
-                .into_iter()
-                .filter_map(|(_, e)| e.map(|e| e.map(Into::into))),
-        );
+        if errors.is_empty() {
+            for item in unresolved_items {
+                resolve_item(&item, &mut self.defs, &self.path, true).unwrap();
+            }
+        }
+        comp.errors
+            .extend(errors.into_iter().map(|e| e.map(Into::into)));
+        if comp.errors.is_empty() {}
         self.comp = Some(comp);
         Ok(())
     }
