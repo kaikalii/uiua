@@ -229,19 +229,14 @@ impl fmt::Display for Primitive {
 }
 
 #[derive(Debug, Clone)]
-pub struct Data {
-    pub variants: Vec<Vec<Type>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct UnresolvedData {
+pub struct UnresolvedTypeAlias {
     pub name: Sp<String>,
     pub params: Sp<UnresolvedParams>,
-    pub kind: Sp<UnresolvedDataKind>,
+    pub kind: Sp<UnresolvedTypeAliasKind>,
 }
 
 #[derive(Debug, Clone)]
-pub enum UnresolvedDataKind {
+pub enum UnresolvedTypeAliasKind {
     Enum(Vec<Sp<UnresolvedVariant>>),
     Record(Vec<Sp<UnresolvedField>>),
 }

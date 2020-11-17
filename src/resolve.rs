@@ -42,14 +42,14 @@ pub fn resolve_item(
             };
             insert_word(ident, word, maybe_read_defs, write_defs, error_span)
         }
-        // Datas
-        UnresolvedItem::Data(ud) => {
+        // Type aliases
+        UnresolvedItem::Type(ut) => {
             // Resolve
-            let (data, words) = resolve_data(ud, read_defs)?;
+            let (alias, words) = resolve_type_alias(ut, read_defs)?;
             // Insert words
             for (name, word) in words {
                 let ident = Ident::new(path.clone(), name);
-                insert_word(ident, word, maybe_read_defs, write_defs, ud.span)?;
+                insert_word(ident, word, maybe_read_defs, write_defs, ut.span)?;
             }
             Ok(())
         }
@@ -68,7 +68,7 @@ pub fn insert_word(
     // Check for identical word
     if read_defs
         .words
-        .joint_ident_and_sig(&ident, &word.sig, Query::Pending)
+        .joint_ident(&ident, &word.sig, Query::Pending)
         .any(|h| h != hash)
     {
         return Err(error_span.sp(ResolutionError::NameAndSignatureExist {
@@ -80,10 +80,10 @@ pub fn insert_word(
     Ok(())
 }
 
-pub fn resolve_data(
-    data: &Sp<UnresolvedData>,
+pub fn resolve_type_alias(
+    data: &Sp<UnresolvedTypeAlias>,
     defs: &Defs,
-) -> SpResult<(Data, Vec<(String, Word)>), ResolutionError> {
+) -> SpResult<(TypeAlias, Vec<(String, Word)>), ResolutionError> {
     todo!()
 }
 

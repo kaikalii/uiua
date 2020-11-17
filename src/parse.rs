@@ -241,9 +241,9 @@ impl Parser {
             nodes,
         }))
     }
-    /// Match a data definition
-    fn data(&mut self, data: Sp<()>) -> Result<Sp<UnresolvedData>, ParseError> {
-        let start = data.span.start;
+    /// Match a type alias
+    fn alias(&mut self, type_token: Sp<()>) -> Result<Sp<UnresolvedTypeAlias>, ParseError> {
+        let start = type_token.span.start;
         // Match the name
         let name = self.mat("name", TT::ident)?;
         // Match type parameters
@@ -264,10 +264,10 @@ impl Parser {
                 let ty = self.ty()?;
                 fields.push((name.span - ty.span).sp(UnresolvedField { name, ty }));
             }
-            Span::new(start, self.loc).sp(UnresolvedData {
+            Span::new(start, self.loc).sp(UnresolvedTypeAlias {
                 name,
                 params,
-                kind: Span::new(kind_start, self.loc).sp(UnresolvedDataKind::Record(fields)),
+                kind: Span::new(kind_start, self.loc).sp(UnresolvedTypeAliasKind::Record(fields)),
             })
         } else {
             // Enum
@@ -292,10 +292,10 @@ impl Parser {
                     break;
                 }
             }
-            Span::new(start, self.loc).sp(UnresolvedData {
+            Span::new(start, self.loc).sp(UnresolvedTypeAlias {
                 name,
                 params,
-                kind: Span::new(kind_start, self.loc).sp(UnresolvedDataKind::Enum(variants)),
+                kind: Span::new(kind_start, self.loc).sp(UnresolvedTypeAliasKind::Enum(variants)),
             })
         })
     }
@@ -316,11 +316,11 @@ impl Parser {
                 return Err(ParseErrorKind::DocCommentOnUse.span(module.span));
             }
             Ok(UnresolvedItem::Use(module))
-        } else if let Some(data) = self.try_mat(TT::Data) {
-            self.data(data).map(UnresolvedItem::Data)
+        } else if let Some(type_token) = self.try_mat(TT::Type) {
+            self.alias(type_token).map(UnresolvedItem::Type)
         } else if let Some(token) = self.next_token() {
             Err(ParseErrorKind::ExpectedFound {
-                expected: "':', 'data', 'use', or comment".into(),
+                expected: "':', 'type', 'use', or comment".into(),
                 found: token.tt,
             }
             .span(token.span))

@@ -124,6 +124,12 @@ pub enum WordKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeAlias {
+    pub params: Vec<String>,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Node {
     Ident(Hash),
@@ -195,7 +201,7 @@ impl fmt::Display for Unhashed {
 #[derive(Debug, Clone)]
 pub enum UnresolvedItem {
     Word(Sp<UnresolvedWord>),
-    Data(Sp<UnresolvedData>),
+    Type(Sp<UnresolvedTypeAlias>),
     Use(Sp<String>),
 }
 

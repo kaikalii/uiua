@@ -231,7 +231,12 @@ impl Defs {
 pub trait CodebaseItem:
     TreeHash + std::fmt::Debug + Clone + Serialize + de::DeserializeOwned + Send
 {
+    /// The type that determines whether two of this item that have the same
+    /// name overlap each other
+    type Joinable;
     const FOLDER: &'static str;
+    fn joinable(&self) -> &Self::Joinable;
+    fn is_joint(a: &Self::Joinable, b: &Self::Joinable) -> bool;
     fn hash_finish(&self, _: &ItemDefs<Self>) -> Hash {
         let mut sha = Sha3_256::default();
         self.hash(&mut sha);
@@ -284,7 +289,14 @@ pub trait CodebaseItem:
 }
 
 impl CodebaseItem for Word {
+    type Joinable = Signature;
     const FOLDER: &'static str = "words";
+    fn joinable(&self) -> &Self::Joinable {
+        &self.sig
+    }
+    fn is_joint(a: &Self::Joinable, b: &Self::Joinable) -> bool {
+        a.is_joint_with(b)
+    }
     fn hash_finish(&self, items: &ItemDefs<Self>) -> Hash {
         if let WordKind::Uiua(nodes) = &self.kind {
             if nodes.len() == 1 {
@@ -303,8 +315,17 @@ impl CodebaseItem for Word {
     }
 }
 
+static TYPE_JOINABLE: () = ();
+
 impl CodebaseItem for Type {
+    type Joinable = ();
     const FOLDER: &'static str = "types";
+    fn joinable(&self) -> &Self::Joinable {
+        &TYPE_JOINABLE
+    }
+    fn is_joint(_: &Self::Joinable, _: &Self::Joinable) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -509,6 +530,22 @@ where
             .insert(ident);
         hash
     }
+    pub fn joint_ident<'a>(
+        &'a self,
+        ident: &Ident,
+        joinable: &'a T::Joinable,
+        query: Query,
+    ) -> impl Iterator<Item = Hash> + 'a {
+        self.entries_by_ident(ident, query)
+            .filter(move |(_, entry)| T::is_joint(entry.item.joinable(), joinable))
+            .map(|(hash, _)| hash)
+    }
+    pub fn joint_entry(&self, hash: &Hash, entry: &ItemEntry<T>, query: Query) -> Option<Hash> {
+        entry.names.iter().find_map(|ident| {
+            self.joint_ident(ident, entry.item.joinable(), query)
+                .find(|h| h != hash)
+        })
+    }
 }
 
 impl ItemDefs<Word> {
@@ -522,22 +559,6 @@ impl ItemDefs<Word> {
             .filter(move |(_, entry)| sig.compose(&entry.item.sig).is_ok())
             .map(|(hash, entry)| (hash, entry.item))
             .collect()
-    }
-    pub fn joint_ident_and_sig<'a>(
-        &'a self,
-        ident: &Ident,
-        sig: &'a Signature,
-        query: Query,
-    ) -> impl Iterator<Item = Hash> + 'a {
-        self.entries_by_ident(ident, query)
-            .filter(move |(_, entry)| entry.item.sig.is_joint_with(sig))
-            .map(|(hash, _)| hash)
-    }
-    pub fn joint_entry(&self, hash: &Hash, entry: &ItemEntry<Word>, query: Query) -> Option<Hash> {
-        entry.names.iter().find_map(|ident| {
-            self.joint_ident_and_sig(ident, &entry.item.sig, query)
-                .find(|h| h != hash)
-        })
     }
     pub fn hash_is_referenced(&self, hash: &Hash) -> bool {
         if let Ok(entries) = Word::get_entries(&self.top_dir) {
