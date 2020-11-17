@@ -55,7 +55,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut last_command = String::new();
     // Command loop
     loop {
-        if let Ok(mut line) = input_recv.try_recv() {
+        for mut line in input_recv.try_iter() {
             let mut cb = cb.lock().unwrap();
             if line.trim().is_empty() {
                 cb.print_path_prompt();

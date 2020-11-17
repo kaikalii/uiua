@@ -5,10 +5,10 @@ use crate::{ast::*, codebase::*, span::*, types::*};
 pub fn resolve_item(
     item: &UnresolvedItem,
     path: &Option<String>,
-    read_defs: Option<&Defs>,
+    maybe_read_defs: Option<&Defs>,
     write_defs: &mut Defs,
 ) -> SpResult<(), ResolutionError> {
-    let read_defs = read_defs.unwrap_or(write_defs);
+    let read_defs = maybe_read_defs.unwrap_or(write_defs);
     match &item {
         // Uses
         UnresolvedItem::Use(module) => {
@@ -35,29 +35,56 @@ pub fn resolve_item(
         UnresolvedItem::Word(uw) => {
             let word = resolve_word(&uw, read_defs)?;
             let ident = Ident::new(path.clone(), uw.name.data.clone());
-            let hash = word.hash_finish(&read_defs.words);
-            // Check for identical word
-            if read_defs
-                .words
-                .joint_ident_and_sig(&ident, &word.sig, Query::Pending)
-                .any(|h| h != hash)
-            {
-                let error_span = if let Some(unres_sig) = &uw.sig {
-                    uw.name.span - unres_sig.span
-                } else {
-                    uw.name.span
-                };
-                return Err(error_span.sp(ResolutionError::NameAndSignatureExist {
-                    ident,
-                    sig: word.sig,
-                }));
-            }
-            write_defs.words.insert(ident, word);
-            Ok(())
+            let error_span = if let Some(unres_sig) = &uw.sig {
+                uw.name.span - unres_sig.span
+            } else {
+                uw.name.span
+            };
+            insert_word(ident, word, maybe_read_defs, write_defs, error_span)
         }
         // Datas
-        UnresolvedItem::Data(_ud) => todo!(),
+        UnresolvedItem::Data(ud) => {
+            // Resolve
+            let (data, words) = resolve_data(ud, read_defs)?;
+            // Insert words
+            for (name, word) in words {
+                let ident = Ident::new(path.clone(), name);
+                insert_word(ident, word, maybe_read_defs, write_defs, ud.span)?;
+            }
+            Ok(())
+        }
     }
+}
+
+pub fn insert_word(
+    ident: Ident,
+    word: Word,
+    read_defs: Option<&Defs>,
+    write_defs: &mut Defs,
+    error_span: Span,
+) -> SpResult<(), ResolutionError> {
+    let read_defs = read_defs.unwrap_or(write_defs);
+    let hash = word.hash_finish(&read_defs.words);
+    // Check for identical word
+    if read_defs
+        .words
+        .joint_ident_and_sig(&ident, &word.sig, Query::Pending)
+        .any(|h| h != hash)
+    {
+        return Err(error_span.sp(ResolutionError::NameAndSignatureExist {
+            ident,
+            sig: word.sig,
+        }));
+    }
+    write_defs.words.insert(ident, word);
+    Ok(())
+}
+
+pub fn resolve_data(
+    data: &Sp<UnresolvedData>,
+    defs: &Defs,
+) -> SpResult<(Data, Vec<(String, Word)>), ResolutionError> {
+    todo!()
 }
 
 pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
