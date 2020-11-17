@@ -8,7 +8,7 @@ pub enum ParseErrorKind {
     Lex(LexErrorKind),
     #[error("Expected {0}")]
     Expected(String),
-    #[error("Expected {expected}, but found '{found}'")]
+    #[error("Expected {expected}, but found {found}")]
     ExpectedFound { expected: String, found: String },
     #[error("Expected signature because of type parameters")]
     ExpectedSignature,
@@ -18,7 +18,7 @@ pub enum ParseErrorKind {
     DocCommentOnUse,
     #[error("Lists must have exactly one type, and quotations require a '--'")]
     InvalidListOrQuotation,
-    #[error("{0} is not a valid tuple sizes. Tuples may have between 2 and 8 items")]
+    #[error("{0} is not a valid tuple size. Tuples may have between 2 and 8 items")]
     InvalidTupleSize(usize),
 }
 
@@ -187,11 +187,9 @@ impl Parser {
     fn sig_or_list(&mut self) -> Result<Option<Sp<SigOrList>>, ParseError> {
         Ok(if let Some(open_paren) = self.try_mat(TT::OpenBracket) {
             let start = open_paren.span.start;
-            let mut end = start;
             // Match before args types
             let mut before = Vec::new();
             while let Some(ty) = self.try_ty()? {
-                end = ty.span.end;
                 before.push(ty);
             }
             // Match double dash
@@ -205,10 +203,11 @@ impl Parser {
             } else if before.len() == 1 {
                 SigOrList::List(before.remove(0))
             } else {
+                let end = self.mat(']', TT::CloseBracket)?.span.end;
                 return Err(ParseErrorKind::InvalidListOrQuotation.span(Span::new(start, end)));
             };
             // Match closing paren
-            end = self.mat(']', TT::CloseBracket)?.span.end;
+            let end = self.mat(']', TT::CloseBracket)?.span.end;
             Some(Span::new(start, end).sp(sig_or_list))
         } else {
             None
