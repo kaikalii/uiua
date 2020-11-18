@@ -193,6 +193,7 @@ impl BuiltinWord {
             BuiltinWord::Call(..) => Box::new(|stack| {
                 let j = stack.pop().get::<usize>();
                 stack.jump(j);
+                stack.i -= 1;
             }),
             BuiltinWord::List => Box::new(|stack| stack.push(VecDeque::new().to_val())),
             BuiltinWord::ListPushBack => Box::new(|stack| {

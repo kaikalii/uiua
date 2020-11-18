@@ -19,6 +19,7 @@ impl Stack {
     pub fn jump(&mut self, j: usize) {
         self.ret.push(self.i + 1);
         self.i = j;
+        println!("jump to {}", j);
     }
     pub fn push<V>(&mut self, val: V)
     where
@@ -48,21 +49,21 @@ pub fn run(word: Word, defs: &Defs) {
     };
     nodes.retain(Node::does_something);
     let mut instrs = Vec::new();
-    let mut running_sig = word.sig.clone();
+    let mut running_sig;
     let mut word_start = 0;
     let mut next_word_start = nodes.len() + 1;
+    // ( prev sig, nodes sig, nodes )
     let mut node_queue = VecDeque::new();
-    node_queue.push_back((word.sig, nodes));
-    while let Some((word_sig, seq)) = node_queue.pop_front() {
+    node_queue.push_back((Signature::new(vec![], vec![]), word.sig, nodes));
+    while let Some((prev_sig, word_sig, seq)) = node_queue.pop_front() {
+        running_sig = prev_sig;
         let seq_len = seq.len();
         for node in seq {
             match node {
                 Node::Ident(hash) => {
                     let entry = defs.words.entry_by_hash(&hash, Query::All).unwrap();
                     let word = entry.item;
-                    running_sig = running_sig
-                        .compose(&word.sig)
-                        .unwrap_or_else(|e| panic!("{:#?}", e));
+                    running_sig = running_sig.compose(&word.sig).unwrap();
                     match word.kind {
                         WordKind::Builtin(bi) => {
                             instrs.push(Instruction::Execute(bi.run_fn()));
@@ -71,7 +72,7 @@ pub fn run(word: Word, defs: &Defs) {
                             nodes.retain(Node::does_something);
                             instrs.push(Instruction::Jump(next_word_start));
                             next_word_start += nodes.len() + 1;
-                            node_queue.push_back((word.sig, nodes));
+                            node_queue.push_back((running_sig.clone(), word.sig, nodes));
                         }
                     }
                 }
@@ -105,7 +106,7 @@ pub fn run(word: Word, defs: &Defs) {
                     let node_sig = Signature::new(vec![], vec![Primitive::Quotation(sig).into()]);
                     running_sig = running_sig.compose(&node_sig).unwrap();
                     next_word_start += nodes.len() + 1;
-                    node_queue.push_back((node_sig, nodes));
+                    node_queue.push_back((running_sig.clone(), node_sig, nodes));
                 }
                 Node::Unhashed(_) => {}
             }
@@ -116,26 +117,33 @@ pub fn run(word: Word, defs: &Defs) {
     let mut stack = Stack::default();
     println!();
     while stack.i < instrs.len() {
+        print!("{}: ", stack.i);
         match &instrs[stack.i] {
             Instruction::Execute(f) => {
                 f(&mut stack);
-                stack.i += 1;
                 for val in &stack.values {
-                    print!("{}", (val.debug)(val.u));
-                    val.drop();
-                    print!(" ");
+                    print!("{} ", (val.debug)(val.u));
                 }
                 println!();
+                stack.i += 1;
             }
             Instruction::Jump(j) => stack.jump(*j),
             Instruction::Return => {
                 if let Some(r) = stack.ret.pop() {
+                    println!("ret to {}", r);
                     stack.i = r;
                 } else {
+                    println!("ret to end");
                     break;
                 }
             }
         }
+    }
+    println!();
+    for val in stack.values {
+        print!("{}", (val.debug)(val.u));
+        val.drop();
+        print!(" ");
     }
 }
 
@@ -296,10 +304,16 @@ impl StackVal for char {
 
 impl StackVal for usize {
     fn from_u(u: u64) -> Self {
-        unsafe { transmute(u) }
+        u as usize
     }
     fn to_u(self) -> u64 {
-        unsafe { transmute(self) }
+        self as u64
+    }
+    fn debug(u: u64) -> String {
+        format!("jump({})", u)
+    }
+    fn display(u: u64) -> String {
+        format!("jump({})", u)
     }
 }
 

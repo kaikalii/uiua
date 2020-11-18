@@ -66,35 +66,39 @@ impl Codebase {
         }));
         let cb_clone = cb.clone();
         // Spawn watcher thread
-        thread::spawn(move || {
-            let _ = watcher;
-            let cb = cb_clone;
-            for event in event_recv {
-                if let DebouncedEvent::Write(path) = event {
-                    // Handle file change
-                    if let Some(diff) = pathdiff::diff_paths(&path, env::current_dir().unwrap()) {
-                        if !is_scratch_file(&path) {
-                            continue;
-                        }
-                        let mut cb = cb.lock().unwrap();
-                        let cb = &mut *cb;
-                        if Instant::now() - cb.last_edit_time < Duration::from_millis(100) {
-                            continue;
-                        }
-                        cb.last_scratch_file = Some(path.clone());
-                        match cb.handle_file_change(&path) {
-                            Ok(()) => {
-                                if let Err(e) = cb.comp.as_ref().unwrap().print(&mut cb.defs) {
-                                    println!("{}", e)
-                                }
+        thread::Builder::new()
+            .name("file watcher".into())
+            .spawn(move || {
+                let _ = watcher;
+                let cb = cb_clone;
+                for event in event_recv {
+                    if let DebouncedEvent::Write(path) = event {
+                        // Handle file change
+                        if let Some(diff) = pathdiff::diff_paths(&path, env::current_dir().unwrap())
+                        {
+                            if !is_scratch_file(&path) {
+                                continue;
                             }
-                            Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
+                            let mut cb = cb.lock().unwrap();
+                            let cb = &mut *cb;
+                            if Instant::now() - cb.last_edit_time < Duration::from_millis(100) {
+                                continue;
+                            }
+                            cb.last_scratch_file = Some(path.clone());
+                            match cb.handle_file_change(&path) {
+                                Ok(()) => {
+                                    if let Err(e) = cb.comp.as_ref().unwrap().print(&mut cb.defs) {
+                                        println!("{}", e)
+                                    }
+                                }
+                                Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
+                            }
+                            cb.print_path_prompt();
                         }
-                        cb.print_path_prompt();
                     }
                 }
-            }
-        });
+            })
+            .unwrap();
         Ok(cb)
     }
     fn handle_file_change(&mut self, path: &Path) -> Result<(), CodebaseError> {
