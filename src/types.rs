@@ -28,11 +28,17 @@ pub enum Type {
 }
 
 impl Type {
+    pub fn list(self) -> Type {
+        Primitive::List(Box::new(self)).into()
+    }
+    pub fn option(self) -> Type {
+        Primitive::Option(Box::new(self)).into()
+    }
     pub fn generics(&self) -> Vec<u8> {
         let mut generics = match self {
             Type::Generic(g) => vec![g.index],
             Type::Prim(prim) => match prim {
-                Primitive::List(inner) => inner.generics(),
+                Primitive::List(inner) | Primitive::Option(inner) => inner.generics(),
                 Primitive::Quotation(sig) => sig
                     .before
                     .iter()
@@ -40,6 +46,9 @@ impl Type {
                     .chain(sig.after.iter().flat_map(Type::generics))
                     .collect(),
                 Primitive::Tuple(types) => types.iter().flat_map(Type::generics).collect(),
+                Primitive::Result(ok, err) => {
+                    ok.generics().into_iter().chain(err.generics()).collect()
+                }
                 _ => Vec::new(),
             },
             Type::Alias(alias) => alias.params.iter().flat_map(Type::generics).collect(),
@@ -67,7 +76,7 @@ impl Type {
         f(self);
         match self {
             Type::Prim(prim) => match prim {
-                Primitive::List(inner) => inner.visit(f),
+                Primitive::List(inner) | Primitive::Option(inner) => inner.visit(f),
                 Primitive::Quotation(sig) => {
                     for ty in &sig.before {
                         ty.visit(f)
@@ -80,6 +89,10 @@ impl Type {
                     for ty in types {
                         ty.visit(f)
                     }
+                }
+                Primitive::Result(ok, err) => {
+                    ok.visit(f);
+                    err.visit(f);
                 }
                 _ => {}
             },
@@ -98,7 +111,7 @@ impl Type {
         f(self);
         match self {
             Type::Prim(prim) => match prim {
-                Primitive::List(inner) => inner.mutate(f),
+                Primitive::List(inner) | Primitive::Option(inner) => inner.mutate(f),
                 Primitive::Quotation(sig) => {
                     for ty in &mut sig.before {
                         ty.mutate(f)
@@ -111,6 +124,10 @@ impl Type {
                     for ty in types {
                         ty.mutate(f)
                     }
+                }
+                Primitive::Result(ok, err) => {
+                    ok.mutate(f);
+                    err.mutate(f);
                 }
                 _ => {}
             },
@@ -312,13 +329,16 @@ pub enum Primitive<T = Type> {
     List(Box<T>),
     Quotation(Signature<T>),
     Tuple(Vec<T>),
+    Option(Box<T>),
+    Result(Box<T>, Box<T>),
 }
 
 pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>>;
 
-impl<T> Primitive<T> {
-    pub fn list(inner: T) -> Self {
-        Primitive::List(Box::new(inner))
+impl Primitive {
+    #[allow(dead_code)]
+    pub fn ty(self) -> Type {
+        Type::Prim(self)
     }
 }
 
@@ -326,12 +346,16 @@ impl TreeHash for Primitive {
     fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
-            Primitive::List(inner) => inner.hash(sha),
+            Primitive::List(inner) | Primitive::Option(inner) => inner.hash(sha),
             Primitive::Quotation(sig) => sig.hash(sha),
             Primitive::Tuple(types) => {
                 for ty in types {
                     ty.hash(sha);
                 }
+            }
+            Primitive::Result(ok, err) => {
+                ok.hash(sha);
+                err.hash(sha);
             }
             _ => {}
         }
@@ -348,6 +372,10 @@ where
             (Primitive::Quotation(a), Primitive::Quotation(b)) => a == b,
             (Primitive::Tuple(a), Primitive::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a == b)
+            }
+            (Primitive::Option(a), Primitive::Option(b)) => a == b,
+            (Primitive::Result(a_ok, a_err), Primitive::Result(b_ok, b_err)) => {
+                a_ok == b_ok && a_err == b_err
             }
             (a, b) => mem::discriminant(a) == mem::discriminant(b),
         }
@@ -374,6 +402,8 @@ impl fmt::Display for Primitive {
                     .intersperse(" ".into())
                     .collect::<String>()
             ),
+            Primitive::Option(inner) => write!(f, "?{}", inner),
+            Primitive::Result(ok, err) => write!(f, "\\{}\\{}", ok, err),
         }
     }
 }
@@ -659,6 +689,11 @@ impl TypeResolver {
                         self.align(a, b)
                     }
                 }
+                (Primitive::Option(a), Primitive::Option(b)) => self.align(a, b),
+                (Primitive::Result(a_ok, a_err), Primitive::Result(b_ok, b_err)) => {
+                    self.align(a_ok, b_ok);
+                    self.align(a_err, b_err);
+                }
                 _ => {}
             },
             (Type::Alias(a), Type::Alias(b)) => self.align(&a.ty, &b.ty),
@@ -793,13 +828,10 @@ fn sig_compose() {
     let c = Signature::new(vec![Nat.into()], vec![Bool.into()]);
     assert_eq!(a.compose(&b).unwrap(), c);
     let a = Signature::new(vec![Nat.into(); 2], vec![Nat.into()]);
-    let b = Signature::new(
-        vec![Primitive::list(Nat.into()).into(), Nat.into()],
-        vec![Primitive::list(Nat.into()).into()],
-    );
+    let b = Signature::new(vec![Nat.ty().list(), Nat.into()], vec![Nat.ty().list()]);
     let c = Signature::new(
-        vec![Primitive::list(Nat.into()).into(), Nat.into(), Nat.into()],
-        vec![Primitive::list(Nat.into()).into()],
+        vec![Nat.ty().list(), Nat.into(), Nat.into()],
+        vec![Nat.ty().list()],
     );
     assert_eq!(a.compose(&b).unwrap(), c);
     let a = Signature::new(vec![Nat.into()], vec![Float.into()]);

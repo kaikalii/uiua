@@ -520,6 +520,11 @@ pub fn resolve_prim(
                 .map(|ty| resolve_concrete_type(ty, defs, params))
                 .collect::<Result<_, _>>()?,
         ),
+        Primitive::Option(ty) => Primitive::Option(Box::new(resolve_type(ty, defs, params)?)),
+        Primitive::Result(ok, err) => Primitive::Result(
+            Box::new(resolve_type(ok, defs, params)?),
+            Box::new(resolve_type(err, defs, params)?),
+        ),
     })
 }
 

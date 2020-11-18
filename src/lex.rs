@@ -30,6 +30,8 @@ pub enum TT {
     WatchColon,
     TestColon,
     Equals,
+    Backslash,
+    QuestionMark,
     Type,
     Data,
     Unique,
@@ -102,6 +104,8 @@ impl fmt::Display for TT {
             TT::WatchColon => ":>".fmt(f),
             TT::TestColon => ":test>".fmt(f),
             TT::Equals => "=".fmt(f),
+            TT::Backslash => "\\".fmt(f),
+            TT::QuestionMark => "?".fmt(f),
             TT::Type => "type".fmt(f),
             TT::Data => "data".fmt(f),
             TT::Unique => "unique".fmt(f),
@@ -166,7 +170,7 @@ fn found_char(found: Option<char>) -> String {
     }
 }
 
-struct Lexer<R>
+pub struct Lexer<R>
 where
     R: Read,
 {
@@ -181,6 +185,15 @@ impl<R> Lexer<R>
 where
     R: Read,
 {
+    pub fn new(input: R) -> Self {
+        Lexer {
+            loc: Loc::new(1, 0),
+            start: Loc::new(1, 0),
+            brackets: Vec::new(),
+            chars: unicode_reader::CodePoints::from(input.bytes()).peekable(),
+            put_back: VecDeque::new(),
+        }
+    }
     fn next_char(&mut self) -> Result<char, LexError> {
         self.try_next_char()
             .unwrap_or_else(|| Err(LexErrorKind::ExpectedCharacter.span(self.start, self.loc)))
@@ -302,6 +315,7 @@ where
                 TT::CloseParen
             }
             '=' => TT::Equals,
+            '\\' => TT::Backslash,
             '`' => {
                 let is_doc = if let Some(Ok('`')) = self.peek() {
                     self.next_char()?;
@@ -366,6 +380,7 @@ where
                     TT::Float(f)
                 } else {
                     match s.as_str() {
+                        "?" => TT::QuestionMark,
                         ":>" => TT::WatchColon,
                         ":test" => TT::TestColon,
                         ":" => TT::Colon,
@@ -373,11 +388,14 @@ where
                         "---" => return Ok(None),
                         "--" => TT::DoubleDash,
                         s => {
-                            if let Some(sub) = [":>", ":", ".", "---", "--"]
+                            if s.starts_with('?') {
+                                self.put_back_str(s, "?", Some(2));
+                                return self.next_token();
+                            } else if let Some(sub) = [":>", ":", ".", "---", "--"]
                                 .iter()
                                 .find(|&&sub| s.contains(sub))
                             {
-                                self.put_back_str(s, sub);
+                                self.put_back_str(s, sub, None);
                                 return self.next_token();
                             } else {
                                 match s {
@@ -407,9 +425,9 @@ where
     {
         res.map_err(|e| e.into().span(self.start, self.loc))
     }
-    fn put_back_str(&mut self, s: &str, split: &str) {
+    fn put_back_str(&mut self, s: &str, split: &str, n: Option<usize>) {
         self.put_back.extend(
-            s.split(split)
+            s.splitn(n.unwrap_or(10000), split)
                 .intersperse(&format!("\u{0}{}\u{0}", split))
                 .map(|s| s.chars())
                 .flatten()
@@ -417,27 +435,22 @@ where
         );
         self.loc.col = self.loc.col.saturating_sub(s.len());
     }
+    pub fn finish(&self) -> Result<(), LexError> {
+        if let Some(brack) = self.brackets.last() {
+            return Err(LexErrorKind::UnmatchedBracket(*brack).span(self.start, self.loc));
+        }
+        Ok(())
+    }
 }
 
-pub fn lex<R>(input: R) -> Result<Vec<Token>, LexError>
+impl<R> Iterator for Lexer<R>
 where
     R: Read,
 {
-    let mut lexer = Lexer {
-        loc: Loc::new(1, 0),
-        start: Loc::new(1, 0),
-        brackets: Vec::new(),
-        chars: unicode_reader::CodePoints::from(input.bytes()).peekable(),
-        put_back: VecDeque::new(),
-    };
-    let mut tokens = Vec::new();
-    while let Some(c) = lexer.next_token()? {
-        tokens.push(c);
+    type Item = Result<Token, LexError>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_token().transpose()
     }
-    if let Some(brack) = lexer.brackets.pop() {
-        return Err(LexErrorKind::UnmatchedBracket(brack).span(lexer.start, lexer.loc));
-    }
-    Ok(tokens)
 }
 
 fn escaped_char(c: char) -> Result<char, LexErrorKind> {
@@ -451,5 +464,5 @@ fn escaped_char(c: char) -> Result<char, LexErrorKind> {
 }
 
 fn ident_char(c: char) -> bool {
-    c > ' ' && c as u32 != 127 && !"=[]{}()".contains(c)
+    c > ' ' && c as u32 != 127 && !"=\\[]{}()".contains(c)
 }

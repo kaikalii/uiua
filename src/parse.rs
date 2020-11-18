@@ -51,17 +51,31 @@ enum SigOrList {
     List(Sp<UnresolvedType>),
 }
 
-struct Parser {
-    tokens: std::vec::IntoIter<Token>,
+struct Parser<R>
+where
+    R: Read,
+{
+    tokens: Lexer<R>,
     put_back: Option<Token>,
-    items: Vec<UnresolvedItem>,
     whitespace: Option<Sp<String>>,
     loc: Loc,
+    keep_going: bool,
 }
 
-impl Parser {
-    fn next_token(&mut self) -> Option<Token> {
-        self.put_back.take().or_else(|| self.tokens.next())
+impl<R> Parser<R>
+where
+    R: Read,
+{
+    fn next_token(&mut self) -> Option<Result<Token, LexError>> {
+        if let Some(token) = self.put_back.take() {
+            Some(Ok(token))
+        } else {
+            let res = self.tokens.next();
+            if res.is_none() {
+                self.keep_going = false;
+            }
+            res
+        }
     }
     fn mat<E: Expectation, T: TTTransform>(
         &mut self,
@@ -69,7 +83,7 @@ impl Parser {
         transform: T,
     ) -> Result<Sp<T::Output>, ParseError> {
         let token = if let Some(token) = self.next_token() {
-            token
+            token?
         } else {
             return Err(
                 ParseErrorKind::Expected(expected.expected()).span(Span::new(self.loc, self.loc))
@@ -117,19 +131,31 @@ impl Parser {
     fn ident(&mut self) -> Result<Option<Sp<Ident>>, ParseError> {
         Ok(if let Some(first) = self.try_mat(TT::ident) {
             Some(if self.try_mat(TT::Period).is_some() {
-                let second = self.mat("name", TT::ident)?;
+                let second = self
+                    .try_mat(TT::QuestionMark)
+                    .map(|qm| Ok(qm.span.sp("?".into())))
+                    .unwrap_or_else(|| self.mat("name", TT::ident))?;
                 (first.span - second.span).sp(Ident::module(first.data, second.data))
             } else {
                 first.map(Ident::no_module)
             })
+        } else if let Some(question_mark) = self.try_mat(TT::QuestionMark) {
+            Some(question_mark.span.sp(Ident::no_module("?")))
         } else {
             None
         })
     }
     /// Try to match a type
     fn try_ty(&mut self) -> Result<Option<Sp<UnresolvedType>>, ParseError> {
-        Ok(if let Some(ident) = self.ident()? {
-            Some(ident.span.sp(match (&ident.module, ident.name.as_str()) {
+        let ty = if let Some(question_mark) = self.try_mat(TT::QuestionMark) {
+            let inner = self.ty()?;
+            Some(
+                Span::new(question_mark.span.start, inner.span.end)
+                    .sp(UnresolvedType::Prim(Primitive::Option(Box::new(inner)))),
+            )
+        } else if let Some(ident) = self.ident()? {
+            let ident_span = ident.span;
+            let ty = match (&ident.module, ident.name.as_str()) {
                 (None, "Bool") => UnresolvedType::Prim(Primitive::Bool),
                 (None, "Nat") => UnresolvedType::Prim(Primitive::Nat),
                 (None, "Int") => UnresolvedType::Prim(Primitive::Int),
@@ -153,7 +179,17 @@ impl Parser {
                         params: Span::new(params_start, params_end).sp(params),
                     }
                 }
-            }))
+            };
+            Some(ident_span.sp(ty))
+        } else if let Some(backslash) = self.try_mat(TT::Backslash) {
+            let ok = self.ty()?;
+            self.mat('\\', TT::Backslash)?;
+            let err = self.ty()?;
+            Some(
+                Span::new(backslash.span.start, err.span.end).sp(UnresolvedType::Prim(
+                    Primitive::Result(Box::new(ok), Box::new(err)),
+                )),
+            )
         } else if let Some(open_paren) = self.try_mat(TT::OpenParen) {
             let start = open_paren.span.start;
             let mut types = Vec::new();
@@ -173,7 +209,8 @@ impl Parser {
             }))
         } else {
             None
-        })
+        };
+        Ok(ty)
     }
     /// Match a type
     fn ty(&mut self) -> Result<Sp<UnresolvedType>, ParseError> {
@@ -388,7 +425,7 @@ impl Parser {
             Ok(UnresolvedItem::Use(module))
         } else if let Some(data_token) = self.try_mat(TT::Data) {
             self.data(data_token).map(UnresolvedItem::Type)
-        } else if let Some(token) = self.next_token() {
+        } else if let Some(token) = self.next_token().transpose()? {
             Err(ParseErrorKind::ExpectedFoundTT {
                 expected: "':', 'type', 'use', or comment".into(),
                 found: token.tt.clone(),
@@ -400,7 +437,7 @@ impl Parser {
         .map(Some)
     }
     fn expected<T, E: Expectation>(&mut self, expected: E) -> Result<T, ParseError> {
-        Err(if let Some(token) = self.next_token() {
+        Err(if let Some(token) = self.next_token().transpose()? {
             ParseErrorKind::ExpectedFoundTT {
                 expected: expected.expected(),
                 found: token.tt.clone(),
@@ -416,20 +453,21 @@ pub fn parse<R>(input: R) -> Result<Vec<UnresolvedItem>, ParseError>
 where
     R: Read,
 {
-    let tokens = lex(input)?;
     let mut parser = Parser {
-        tokens: tokens.into_iter(),
+        tokens: Lexer::new(input),
         put_back: None,
-        items: Vec::new(),
         whitespace: None,
         loc: Loc::new(1, 1),
+        keep_going: true,
     };
-    while !(parser.tokens.as_slice().is_empty() && parser.put_back.is_none()) {
+    let mut items = Vec::new();
+    while parser.keep_going {
         if let Some(item) = parser.item()? {
-            parser.items.push(item);
+            items.push(item);
         }
     }
-    Ok(parser.items)
+    parser.tokens.finish()?;
+    Ok(items)
 }
 
 trait TTTransform {

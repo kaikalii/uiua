@@ -75,14 +75,14 @@ builtin_words!(
 );
 
 fn generic_list() -> Type {
-    Primitive::list(Type::Generic(Generic::new("a", 0, true))).into()
+    Type::Generic(Generic::new("a", 0, true)).list()
 }
 
 fn generic(name: &str, i: u8) -> Type {
     Type::Generic(Generic::new(name, i, true))
 }
 
-fn a() -> Type {
+pub fn a() -> Type {
     generic("a", 0)
 }
 
@@ -160,7 +160,7 @@ impl BuiltinWord {
                 (vec![generic_list(), a()], vec![generic_list()])
             }
             BuiltinWord::ListPopBack | BuiltinWord::ListPopFront => {
-                (vec![generic_list()], vec![generic_list(), a()])
+                (vec![generic_list()], vec![generic_list(), a().option()])
             }
             BuiltinWord::Swap => (vec![a(), b()], vec![b(), a()]),
             BuiltinWord::Pop => (vec![a()], vec![]),
