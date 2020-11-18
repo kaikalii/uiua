@@ -330,10 +330,10 @@ impl CodebaseItem for Word {
 }
 
 impl CodebaseItem for TypeAlias {
-    type Joinable = Option<String>;
+    type Joinable = Vec<String>;
     const FOLDER: &'static str = "types";
     fn joinable(&self) -> &Self::Joinable {
-        &self.unique_name
+        &self.params
     }
     fn is_joint(_: &Self::Joinable, _: &Self::Joinable) -> bool {
         true

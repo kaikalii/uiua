@@ -115,7 +115,7 @@ pub fn insert_type_alias(
     if defs
         .read()
         .types
-        .joint_ident(&ident, &alias.unique_name, Query::Pending)
+        .joint_ident(&ident, &alias.params, Query::Pending)
         .any(|h| h != hash)
     {
         return Err(error_span.sp(ResolutionError::AliasNameExists(ident)));
@@ -130,13 +130,13 @@ pub fn resolve_type_alias(
 ) -> SpResult<(TypeAlias, Vec<(String, Word)>), ResolutionError> {
     Ok(match &alias.kind.data {
         UnresolvedTypeAliasKind::Enum(variants) => {
-            let prim_ty = Type::Prim(
-                Primitive::Nat,
-                Some(AliasName {
-                    name: alias.name.data.clone(),
-                    unique: alias.unique,
-                }),
-            );
+            let res_alias = TypeAlias {
+                params: Vec::new(),
+                unique: alias.unique,
+                name: alias.name.data.clone(),
+                ty: Primitive::Nat.into(),
+            };
+            let prim_ty = Type::Alias(Box::new(res_alias.clone()));
             let words: Vec<_> = variants
                 .iter()
                 .enumerate()
@@ -151,16 +151,7 @@ pub fn resolve_type_alias(
                     )
                 })
                 .collect();
-            let alias = TypeAlias {
-                params: Vec::new(),
-                unique_name: if alias.unique {
-                    Some(alias.name.data.clone())
-                } else {
-                    None
-                },
-                ty: prim_ty,
-            };
-            (alias, words)
+            (res_alias, words)
         }
         UnresolvedTypeAliasKind::Record { params, fields } => {
             let fields: Vec<(String, Type)> = fields
@@ -170,13 +161,13 @@ pub fn resolve_type_alias(
                 })
                 .collect::<Result<_, _>>()?;
             let field_types: Vec<Type> = fields.iter().map(|(_, ty)| ty.clone()).collect();
-            let prim_ty = Type::Prim(
-                Primitive::Tuple(field_types.clone()),
-                Some(AliasName {
-                    name: alias.name.data.clone(),
-                    unique: alias.unique,
-                }),
-            );
+            let res_alias = TypeAlias {
+                params: Vec::new(),
+                unique: alias.unique,
+                name: alias.name.data.clone(),
+                ty: Primitive::Tuple(field_types.clone()).into(),
+            };
+            let prim_ty = Type::Alias(Box::new(res_alias.clone()));
             let fields_len = fields.len();
             // Constructor
             let mut words = vec![(
@@ -222,16 +213,7 @@ pub fn resolve_type_alias(
                     },
                 )))
             }));
-            let alias = TypeAlias {
-                params: Vec::new(),
-                unique_name: if alias.unique {
-                    Some(alias.name.data.clone())
-                } else {
-                    None
-                },
-                ty: prim_ty,
-            };
-            (alias, words)
+            (res_alias, words)
         }
     })
 }
@@ -449,9 +431,7 @@ fn resolve_concrete_type(
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Type, ResolutionError> {
     match &ty.data {
-        UnresolvedType::Prim(prim) => {
-            Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?, None))
-        }
+        UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
         UnresolvedType::Ident(name) => {
             if let Some((_, alias)) = defs.types.entries_by_ident(name, Query::All).next() {
                 Ok(alias.item.ty)
