@@ -11,9 +11,15 @@ pub type StackFn = Box<dyn Fn(&mut Stack)>;
 #[derive(Default)]
 pub struct Stack {
     pub values: Vec<Value>,
+    pub i: usize,
+    pub ret: Vec<usize>,
 }
 
 impl Stack {
+    pub fn jump(&mut self, j: usize) {
+        self.ret.push(self.i + 1);
+        self.i = j;
+    }
     pub fn push<V>(&mut self, val: V)
     where
         V: Into<Value>,
@@ -28,72 +34,108 @@ impl Stack {
     }
 }
 
-pub struct Instruction {
-    pub f: StackFn,
-    pub ty: Primitive,
+pub enum Instruction {
+    Execute(StackFn),
+    Jump(usize),
+    Return,
 }
 
-#[allow(unused_variables)]
 pub fn run(word: Word, defs: &Defs) {
-    let nodes = if let WordKind::Uiua(nodes) = word.kind {
+    let mut nodes = if let WordKind::Uiua(nodes) = word.kind {
         nodes
     } else {
         panic!("somehow run builtin word")
     };
+    nodes.retain(Node::does_something);
     let mut instrs = Vec::new();
-    let mut sig = word.sig;
-    for node in nodes {
-        match node {
-            Node::Ident(hash) => {
-                let entry = defs.words.entry_by_hash(&hash, Query::All).unwrap();
-                let word = entry.item;
-                sig = sig.compose(&word.sig).expect("uncomposable signatures");
-                match word.kind {
-                    WordKind::Builtin(bi) => {
-                        instrs.push(Instruction {
-                            f: bi.run_fn(),
-                            ty: sig
-                                .after
-                                .last()
-                                .cloned()
-                                .expect("composed signature has no last type")
-                                .unwrap_primitive(),
-                        });
+    let mut running_sig = word.sig.clone();
+    let mut word_start = 0;
+    let mut next_word_start = nodes.len() + 1;
+    let mut node_queue = VecDeque::new();
+    node_queue.push_back((word.sig, nodes));
+    while let Some((word_sig, seq)) = node_queue.pop_front() {
+        let seq_len = seq.len();
+        for node in seq {
+            match node {
+                Node::Ident(hash) => {
+                    let entry = defs.words.entry_by_hash(&hash, Query::All).unwrap();
+                    let word = entry.item;
+                    running_sig = running_sig
+                        .compose(&word.sig)
+                        .unwrap_or_else(|e| panic!("{:#?}", e));
+                    match word.kind {
+                        WordKind::Builtin(bi) => {
+                            instrs.push(Instruction::Execute(bi.run_fn()));
+                        }
+                        WordKind::Uiua(mut nodes) => {
+                            nodes.retain(Node::does_something);
+                            instrs.push(Instruction::Jump(next_word_start));
+                            next_word_start += nodes.len() + 1;
+                            node_queue.push_back((word.sig, nodes));
+                        }
                     }
-                    WordKind::Uiua(_) => todo!("uiua words"),
+                }
+                Node::Literal(lit) => {
+                    let prim = lit.as_primitive();
+                    let f: StackFn = match lit {
+                        Literal::Bool(b) => Box::new(move |stack| stack.push(b)),
+                        Literal::Nat(n) => Box::new(move |stack| stack.push(n)),
+                        Literal::Int(i) => Box::new(move |stack| stack.push(i)),
+                        Literal::Float(f) => Box::new(move |stack| stack.push(f)),
+                        Literal::Char(c) => Box::new(move |stack| stack.push(c)),
+                        Literal::Text(s) => {
+                            let val = s.to_val();
+                            Box::new(move |stack| stack.push(val))
+                        }
+                    };
+                    running_sig = running_sig
+                        .compose(&Signature::new(vec![], vec![prim.clone().into()]))
+                        .unwrap();
+                    instrs.push(Instruction::Execute(f));
+                }
+                Node::SelfIdent => {
+                    instrs.push(Instruction::Jump(word_start));
+                    running_sig = running_sig.compose(&word_sig).unwrap();
+                }
+                Node::Quotation { sig, mut nodes } => {
+                    nodes.retain(Node::does_something);
+                    instrs.push(Instruction::Execute(Box::new(move |stack| {
+                        stack.push(next_word_start)
+                    })));
+                    let node_sig = Signature::new(vec![], vec![Primitive::Quotation(sig).into()]);
+                    running_sig = running_sig.compose(&node_sig).unwrap();
+                    next_word_start += nodes.len() + 1;
+                    node_queue.push_back((node_sig, nodes));
+                }
+                Node::Unhashed(_) => {}
+            }
+        }
+        instrs.push(Instruction::Return);
+        word_start += seq_len;
+    }
+    let mut stack = Stack::default();
+    println!();
+    while stack.i < instrs.len() {
+        match &instrs[stack.i] {
+            Instruction::Execute(f) => {
+                f(&mut stack);
+                stack.i += 1;
+                for val in &stack.values {
+                    print!("{}", (val.debug)(val.u));
+                    val.drop();
+                    print!(" ");
+                }
+                println!();
+            }
+            Instruction::Jump(j) => stack.jump(*j),
+            Instruction::Return => {
+                if let Some(r) = stack.ret.pop() {
+                    stack.i = r;
+                } else {
+                    break;
                 }
             }
-            Node::Literal(lit) => {
-                let prim = lit.as_primitive();
-                let f: StackFn = match lit {
-                    Literal::Bool(b) => Box::new(move |stack| stack.push(b)),
-                    Literal::Nat(n) => Box::new(move |stack| stack.push(n)),
-                    Literal::Int(i) => Box::new(move |stack| stack.push(i)),
-                    Literal::Float(f) => Box::new(move |stack| stack.push(f)),
-                    Literal::Char(c) => Box::new(move |stack| stack.push(c)),
-                    Literal::Text(s) => {
-                        let val = s.to_val();
-                        Box::new(move |stack| stack.push(val))
-                    }
-                };
-                sig = sig
-                    .compose(&Signature::new(vec![], vec![prim.clone().into()]))
-                    .unwrap();
-                instrs.push(Instruction { f, ty: prim });
-            }
-            _ => {}
         }
-    }
-    let mut i = 0;
-    let mut stack = Stack::default();
-    while i < instrs.len() {
-        (instrs[i].f)(&mut stack);
-        i += 1;
-    }
-    for val in stack.values {
-        print!("{}", (val.debug)(val.u));
-        val.drop();
-        print!(" ");
     }
 }
 
@@ -249,6 +291,15 @@ impl StackVal for char {
     }
     fn to_u(self) -> u64 {
         unsafe { transmute(self as u64) }
+    }
+}
+
+impl StackVal for usize {
+    fn from_u(u: u64) -> Self {
+        unsafe { transmute(u) }
+    }
+    fn to_u(self) -> u64 {
+        unsafe { transmute(self) }
     }
 }
 

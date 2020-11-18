@@ -28,13 +28,6 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn unwrap_primitive(self) -> Primitive {
-        match self {
-            Type::Prim(prim) => prim,
-            Type::Generic(_) => panic!("attempted to unwrap generic as primitive"),
-            Type::Alias(alias) => alias.resolve().unwrap_primitive(),
-        }
-    }
     pub fn generics(&self) -> Vec<u8> {
         let mut generics = match self {
             Type::Generic(g) => vec![g.index],

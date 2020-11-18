@@ -128,16 +128,19 @@ pub enum WordKind {
 pub enum Node {
     Ident(Hash),
     SelfIdent,
-    Quotation(Vec<Node>),
+    Quotation { sig: Signature, nodes: Vec<Node> },
     Literal(Literal),
     Unhashed(Unhashed),
 }
 
 impl Node {
+    pub fn does_something(&self) -> bool {
+        !matches!(self, Node::Unhashed(_))
+    }
     pub fn references_hash(&self, hash: &Hash) -> bool {
         match self {
             Node::Ident(h) => h == hash,
-            Node::Quotation(nodes) => nodes.iter().any(|node| node.references_hash(hash)),
+            Node::Quotation { nodes, .. } => nodes.iter().any(|node| node.references_hash(hash)),
             _ => false,
         }
     }
@@ -150,7 +153,9 @@ impl Node {
                     .and_then(|entry| entry.names.iter().next().map(ToString::to_string))
                     .unwrap_or_else(|| hash.to_string()[0..8].into()),
                 Node::SelfIdent => word_name.into(),
-                Node::Quotation(nodes) => format!("[ {}]", Node::format(nodes, word_name, words)),
+                Node::Quotation { nodes, .. } => {
+                    format!("[ {} ]", Node::format(nodes, word_name, words))
+                }
                 Node::Literal(lit) => lit.to_string(),
                 Node::Unhashed(unhashed) => unhashed.to_string(),
             })
@@ -166,7 +171,7 @@ impl TreeHash for Node {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
             Node::Ident(hash) => sha.update(hash),
-            Node::Quotation(nodes) => {
+            Node::Quotation { nodes, .. } => {
                 for node in nodes {
                     node.hash(sha);
                 }

@@ -368,7 +368,8 @@ pub fn resolve_sequence(
             }
             UnresolvedNode::Quotation(sub_nodes) => {
                 let (sub_nodes, sub_sig) = resolve_sequence(sub_nodes, defs, purpose, None)?;
-                let node_sig = Signature::new(vec![], vec![Primitive::Quotation(sub_sig).into()]);
+                let node_sig =
+                    Signature::new(vec![], vec![Primitive::Quotation(sub_sig.clone()).into()]);
                 #[allow(unreachable_code)]
                 {
                     compose!(
@@ -376,9 +377,10 @@ pub fn resolve_sequence(
                         panic!("quotation composition failed")
                     );
                 }
-                resolved_nodes.push(node.span.sp(Node::Quotation(
-                    sub_nodes.into_iter().map(|node| node.data).collect(),
-                )));
+                resolved_nodes.push(node.span.sp(Node::Quotation {
+                    sig: sub_sig,
+                    nodes: sub_nodes.into_iter().map(|node| node.data).collect(),
+                }));
             }
             UnresolvedNode::Unhashed(s) => {
                 resolved_nodes.push(node.span.sp(Node::Unhashed(s.clone())))
