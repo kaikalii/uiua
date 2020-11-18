@@ -361,29 +361,33 @@ where
                     TT::Nat(n)
                 } else if let Ok(f) = s.parse::<f64>() {
                     TT::Float(f)
-                } else if s == "." {
-                    TT::Period
-                } else if s.contains('.') {
-                    self.put_back.extend(
-                        s.split('.')
-                            .intersperse("\u{0}.\u{0}")
-                            .map(|s| s.chars())
-                            .flatten()
-                            .map(Ok),
-                    );
-                    self.loc.col = self.loc.col.saturating_sub(s.len());
-                    return self.next_token();
                 } else {
                     match s.as_str() {
-                        "true" => TT::Bool(true),
-                        "false" => TT::Bool(false),
-                        "type" => TT::Type,
-                        "data" => TT::Data,
-                        "use" => TT::Use,
-                        "unique" => TT::Unique,
-                        "--" => TT::DoubleDash,
+                        "." => TT::Period,
                         "---" => return Ok(None),
-                        _ => TT::Ident(s),
+                        "--" => TT::DoubleDash,
+                        s => {
+                            if s.contains('.') {
+                                self.put_back_str(&s, ".");
+                                return self.next_token();
+                            } else if s.contains("---") {
+                                self.put_back_str(&s, "---");
+                                return self.next_token();
+                            } else if s.contains("--") {
+                                self.put_back_str(&s, "--");
+                                return self.next_token();
+                            } else {
+                                match s {
+                                    "true" => TT::Bool(true),
+                                    "false" => TT::Bool(false),
+                                    "type" => TT::Type,
+                                    "data" => TT::Data,
+                                    "use" => TT::Use,
+                                    "unique" => TT::Unique,
+                                    _ => TT::Ident(s.into()),
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -399,6 +403,16 @@ where
         E: Into<LexErrorKind>,
     {
         res.map_err(|e| e.into().span(self.start, self.loc))
+    }
+    fn put_back_str(&mut self, s: &str, split: &str) {
+        self.put_back.extend(
+            s.split(split)
+                .intersperse(&format!("\u{0}{}\u{0}", split))
+                .map(|s| s.chars())
+                .flatten()
+                .map(Ok),
+        );
+        self.loc.col = self.loc.col.saturating_sub(s.len());
     }
 }
 
