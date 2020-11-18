@@ -10,6 +10,8 @@ pub enum ParseErrorKind {
     Expected(String),
     #[error("Expected {expected}, but found {found}")]
     ExpectedFound { expected: String, found: String },
+    #[error("Expected {expected}, but found '{found}'")]
+    ExpectedFoundTT { expected: String, found: TT },
     #[error("Expected signature because of type parameters")]
     ExpectedSignature,
     #[error("{0}")]
@@ -86,9 +88,9 @@ impl Parser {
             self.mat(expected, transform)
         } else {
             self.put_back = Some(token.clone());
-            Err(ParseErrorKind::ExpectedFound {
+            Err(ParseErrorKind::ExpectedFoundTT {
                 expected: expected.expected(),
-                found: token.tt.to_string(),
+                found: token.tt.clone(),
             }
             .span(token.span))
         }
@@ -374,9 +376,9 @@ impl Parser {
         } else if let Some(data_token) = self.try_mat(TT::Data) {
             self.data(data_token).map(UnresolvedItem::Type)
         } else if let Some(token) = self.next_token() {
-            Err(ParseErrorKind::ExpectedFound {
+            Err(ParseErrorKind::ExpectedFoundTT {
                 expected: "':', 'type', 'use', or comment".into(),
-                found: token.tt.to_string(),
+                found: token.tt.clone(),
             }
             .span(token.span))
         } else {
@@ -386,9 +388,9 @@ impl Parser {
     }
     fn expected<T, E: Expectation>(&mut self, expected: E) -> Result<T, ParseError> {
         Err(if let Some(token) = self.next_token() {
-            ParseErrorKind::ExpectedFound {
+            ParseErrorKind::ExpectedFoundTT {
                 expected: expected.expected(),
-                found: token.tt.to_string(),
+                found: token.tt.clone(),
             }
             .span(token.span)
         } else {
