@@ -1,9 +1,9 @@
-use std::mem;
+use std::{collections::VecDeque, mem};
 
 use serde::*;
 use sha3::*;
 
-use crate::{ast::*, types::*};
+use crate::{ast::*, runtime::*, types::*};
 
 pub static PRELUDE: &[&str] = &["stack", "list", "tuple", "control"];
 
@@ -173,6 +173,33 @@ impl BuiltinWord {
             }
             BuiltinWord::TupleGet(_, n) => Ident::module("tuple".into(), format!("{}>>", n)),
             BuiltinWord::TupleSet(_, n) => Ident::module("tuple".into(), format!(">>{}", n)),
+        }
+    }
+    pub fn run_fn(&self) -> StackFn {
+        match self {
+            BuiltinWord::Pop => Box::new(|stack| {
+                stack.pop().drop();
+            }),
+            BuiltinWord::Dup => Box::new(|stack| {
+                let duped = stack.top().dup();
+                stack.push(duped);
+            }),
+            BuiltinWord::Swap => Box::new(|stack| {
+                let a = stack.pop();
+                let b = stack.pop();
+                stack.push(a);
+                stack.push(b);
+            }),
+            BuiltinWord::List => Box::new(|stack| stack.push(VecDeque::new().to_val())),
+            BuiltinWord::ListPushBack => Box::new(|stack| {
+                let item = stack.pop();
+                stack.top().get_ptr_mut::<List>().push_back(item);
+            }),
+            BuiltinWord::ListPushFront => Box::new(|stack| {
+                let item = stack.pop();
+                stack.top().get_ptr_mut::<List>().push_front(item);
+            }),
+            _ => todo!("other builtin functions"),
         }
     }
 }
