@@ -504,8 +504,6 @@ pub fn resolve_prim(
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Primitive, ResolutionError> {
     Ok(match prim {
-        Primitive::Never => Primitive::Never,
-        Primitive::Unit => Primitive::Unit,
         Primitive::Bool => Primitive::Bool,
         Primitive::Nat => Primitive::Nat,
         Primitive::Int => Primitive::Int,

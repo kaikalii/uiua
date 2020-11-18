@@ -164,7 +164,7 @@ impl BuiltinWord {
             }
             BuiltinWord::Swap => (vec![a(), b()], vec![b(), a()]),
             BuiltinWord::Pop => (vec![a()], vec![]),
-            BuiltinWord::Panic => (vec![Primitive::Text.into()], vec![Primitive::Never.into()]),
+            BuiltinWord::Panic => (vec![Primitive::Text.into()], vec![]),
             BuiltinWord::Print | BuiltinWord::Println => (vec![Primitive::Text.into()], vec![]),
             BuiltinWord::Format(prim) => (vec![prim.clone().into()], vec![Primitive::Text.into()]),
         };
@@ -219,11 +219,11 @@ impl BuiltinWord {
             BuiltinWord::List => Box::new(|stack| stack.push(VecDeque::new().to_val())),
             BuiltinWord::ListPushBack => Box::new(|stack| {
                 let item = stack.pop();
-                stack.top().get_ptr_mut::<List>().push_back(item);
+                stack.top_mut().get_ptr_mut::<List>().push_back(item);
             }),
             BuiltinWord::ListPushFront => Box::new(|stack| {
                 let item = stack.pop();
-                stack.top().get_ptr_mut::<List>().push_front(item);
+                stack.top_mut().get_ptr_mut::<List>().push_front(item);
             }),
             BuiltinWord::Print => Box::new(|stack| print!("{}", stack.pop().get_ptr::<Text>())),
             BuiltinWord::Println => Box::new(|stack| println!("{}", stack.pop().get_ptr::<Text>())),
@@ -250,6 +250,16 @@ impl BuiltinWord {
                 }),
                 _ => unimplemented!(),
             },
+            BuiltinWord::If => Box::new(|stack| {
+                let b = stack.pop();
+                let a = stack.pop();
+                let cond = stack.pop();
+                stack.push(if cond.get() { a } else { b });
+            }),
+            BuiltinWord::Panic => Box::new(|stack| {
+                let message = stack.pop().unwrap::<Text>();
+                stack.panic = Some(message);
+            }),
             _ => todo!("other builtin functions"),
         }
     }

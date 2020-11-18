@@ -129,7 +129,6 @@ impl TypeSet for Type {
         match (self, other) {
             (_, Type::Generic(_)) => true,
             (Type::Generic(_), _) => false,
-            (_, Type::Prim(Primitive::Never)) => true,
             (Type::Prim(Primitive::List(a)), Type::Prim(Primitive::List(b))) => a.is_subset_of(b),
             (Type::Prim(Primitive::Quotation(a)), Type::Prim(Primitive::Quotation(b))) => {
                 a.is_subset_of(b)
@@ -304,8 +303,6 @@ impl DerefMut for TypeParams {
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 pub enum Primitive<T = Type> {
-    Never,
-    Unit,
     Bool,
     Nat,
     Int,
@@ -347,7 +344,6 @@ where
 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Primitive::Never, _) | (_, Primitive::Never) => true,
             (Primitive::List(a), Primitive::List(b)) => a == b,
             (Primitive::Quotation(a), Primitive::Quotation(b)) => a == b,
             (Primitive::Tuple(a), Primitive::Tuple(b)) => {
@@ -361,8 +357,6 @@ where
 impl fmt::Display for Primitive {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Primitive::Never => "!".fmt(f),
-            Primitive::Unit => "()".fmt(f),
             Primitive::Bool => "Bool".fmt(f),
             Primitive::Nat => "Nat".fmt(f),
             Primitive::Int => "Int".fmt(f),

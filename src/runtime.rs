@@ -12,6 +12,7 @@ pub struct Stack {
     pub i: usize,
     pub ret: Vec<usize>,
     pub strings: Vec<String>,
+    pub panic: Option<String>,
 }
 
 impl Stack {
@@ -30,6 +31,9 @@ impl Stack {
     }
     pub fn top(&self) -> &Value {
         self.values.last().expect("nothing on top")
+    }
+    pub fn top_mut(&mut self) -> &mut Value {
+        self.values.last_mut().expect("nothing on top")
     }
 }
 
@@ -120,6 +124,9 @@ pub fn run(word: Word, defs: &Defs) {
             Instruction::Execute(f) => {
                 f(&mut stack);
                 stack.i += 1;
+                if let Some(message) = stack.panic.take() {
+                    println!("panicked: {}", message);
+                }
             }
             Instruction::Jump(j) => stack.jump(*j),
             Instruction::Return => {
@@ -162,17 +169,25 @@ impl Value {
     {
         T::from_u(self.u)
     }
-    pub fn get_ptr<'a, T>(&self) -> &'a T
+    pub fn get_ptr<T>(&self) -> &T
     where
         T: HeapVal,
     {
         T::ptr_from_u(self.u)
     }
-    pub fn get_ptr_mut<'a, T>(&self) -> &'a mut T
+    pub fn get_ptr_mut<T>(&mut self) -> &mut T
     where
         T: HeapVal,
     {
         Ptr::make_mut(T::ptr_from_u(self.u))
+    }
+    pub fn unwrap<T>(mut self) -> T
+    where
+        T: HeapVal,
+    {
+        self.drop = no_drop;
+        Ptr::try_unwrap(*unsafe { Box::from_raw(self.u as usize as *mut Ptr<T>) })
+            .unwrap_or_else(|ptr| (*ptr).clone())
     }
 }
 
