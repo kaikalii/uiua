@@ -373,7 +373,7 @@ where
                         "---" => return Ok(None),
                         "--" => TT::DoubleDash,
                         s => {
-                            if let Some(sub) = [":>", ":test", ":", ".", "---", "--"]
+                            if let Some(sub) = [":>", ":", ".", "---", "--"]
                                 .iter()
                                 .find(|&&sub| s.contains(sub))
                             {

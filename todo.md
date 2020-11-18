@@ -2,4 +2,5 @@
 - Rules and Follows
 - Purity in signatures
 - Lots more builtins
+- Tests
 - Dealias command
