@@ -276,24 +276,31 @@ impl Parser {
         Ok(nodes)
     }
     /// Match a word definition
-    fn word(&mut self, doc: String, colon: Sp<()>) -> Result<Sp<UnresolvedWord>, ParseError> {
+    fn word(
+        &mut self,
+        doc: String,
+        colon: Sp<()>,
+        purpose: Sp<UnresolvedWordPurpose>,
+    ) -> Result<Sp<UnresolvedWord>, ParseError> {
         let start = colon.span.start;
-        // Match the name
-        let name = self.mat("identifier", TT::ident)?;
-        // Match type parameters
-        let params = self.params()?;
-        // Match an optional type signature
-        let sig = self.sig()?;
-        if sig.is_none() && !params.is_empty() {
-            return Err(ParseErrorKind::ExpectedSignature.span(params.span));
+        let mut sig = None;
+        let mut params = Span::new(start, start).sp(Vec::new());
+        if purpose.name().is_some() {
+            // Match type parameters
+            params = self.params()?;
+            // Match an optional type signature
+            sig = self.sig()?;
+            if sig.is_none() && !params.is_empty() {
+                return Err(ParseErrorKind::ExpectedSignature.span(params.span));
+            }
+            // Match equals sign
+            self.mat('=', TT::Equals)?;
         }
-        // Match equals sign
-        self.mat('=', TT::Equals)?;
         self.clear_whitespace();
         // Match the nodes
         let nodes = self.seq()?;
         Ok(Span::new(start, self.loc).sp(UnresolvedWord {
-            name,
+            purpose,
             doc,
             params,
             sig,
@@ -366,7 +373,14 @@ impl Parser {
         if self.unhashed().is_some() {
             return Ok(None);
         } else if let Some(colon) = self.try_mat(TT::Colon) {
-            self.word(doc, colon).map(UnresolvedItem::Word)
+            let purpose = self.mat("name", TT::ident)?.map(WordPurpose::Regular);
+            self.word(doc, colon, purpose).map(UnresolvedItem::Word)
+        } else if let Some(colon) = self.try_mat(TT::TestColon) {
+            let purpose = self.mat("name", TT::ident)?.map(WordPurpose::Test);
+            self.word(doc, colon, purpose).map(UnresolvedItem::Word)
+        } else if let Some(colon) = self.try_mat(TT::WatchColon) {
+            let purpose = colon.span.sp(WordPurpose::Watch);
+            self.word(doc, colon, purpose).map(UnresolvedItem::Word)
         } else if self.try_mat(TT::Use).is_some() {
             let module = self.mat("module name", TT::ident)?;
             if !doc.is_empty() {

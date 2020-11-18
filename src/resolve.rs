@@ -28,7 +28,7 @@ pub fn resolve_item(
     item: &UnresolvedItem,
     path: &Option<String>,
     mut defs: DefsIO,
-) -> SpResult<(), ResolutionError> {
+) -> SpResult<Option<Word>, ResolutionError> {
     match &item {
         // Uses
         UnresolvedItem::Use(module) => {
@@ -48,7 +48,7 @@ pub fn resolve_item(
                     .any(|ident| ident.module.as_ref().map_or(false, |m| m == &module.data));
             if module_exists {
                 defs.read().uses.lock().unwrap().insert(module.data.clone());
-                Ok(())
+                Ok(None)
             } else {
                 Err(module.clone().map(ResolutionError::UnknownModule))
             }
@@ -56,13 +56,24 @@ pub fn resolve_item(
         // Words
         UnresolvedItem::Word(uw) => {
             let word = resolve_word(&uw, defs.read())?;
-            let ident = Ident::new(path.clone(), uw.name.data.clone());
             let error_span = if let Some(unres_sig) = &uw.sig {
-                uw.name.span - unres_sig.span
+                uw.purpose.span - unres_sig.span
             } else {
-                uw.name.span
+                uw.purpose.span
             };
-            insert_word(ident, word, &mut defs, error_span)
+            let res = if uw.purpose.should_run() {
+                if !word.sig.before.is_empty() {
+                    return Err(error_span.sp(ResolutionError::InvalidRunSignature(word.sig)));
+                }
+                Some(word.clone())
+            } else {
+                None
+            };
+            if let Some(name) = uw.purpose.name() {
+                let ident = Ident::new(path.clone(), name.clone());
+                insert_word(ident, word, &mut defs, error_span)?;
+            }
+            Ok(res)
         }
         // Type aliases
         UnresolvedItem::Type(ut) => {
@@ -76,7 +87,7 @@ pub fn resolve_item(
                 let ident = Ident::new(path.clone(), name);
                 insert_word(ident, word, &mut defs, ut.span)?;
             }
-            Ok(())
+            Ok(None)
         }
     }
 }
@@ -233,7 +244,7 @@ pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, Re
         None
     };
     let given_sig = given_sig.as_ref();
-    let (nodes, sig) = resolve_sequence(&word.nodes, defs, &word.name, given_sig)?;
+    let (nodes, sig) = resolve_sequence(&word.nodes, defs, &word.purpose, given_sig)?;
     Ok(Word {
         doc: word.doc.clone(),
         sig,
@@ -244,7 +255,7 @@ pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, Re
 pub fn resolve_sequence(
     nodes: &[Sp<UnresolvedNode>],
     defs: &Defs,
-    name: &Sp<String>,
+    purpose: &Sp<UnresolvedWordPurpose>,
     given_sig: Option<&Sp<Signature>>,
 ) -> SpResult<(Vec<Sp<Node>>, Signature), ResolutionError> {
     let mut resolved_nodes = Vec::new();
@@ -267,13 +278,14 @@ pub fn resolve_sequence(
     for (i, node) in nodes.iter().enumerate() {
         match &node.data {
             UnresolvedNode::Ident(ident) => {
-                if ident.single_and_eq(&name.data) {
+                if let Some(name) = purpose.name().filter(|name| ident.single_and_eq(name)) {
                     // Self-identifier
-                    let node_sig = given_sig.cloned().ok_or_else(|| {
-                        name.clone()
-                            .map(Ident::no_module)
-                            .map(ResolutionError::RecursiveNoSignature)
-                    })?;
+                    let node_sig =
+                        given_sig.cloned().ok_or_else(|| {
+                            purpose.span.sp(ResolutionError::RecursiveNoSignature(
+                                Ident::no_module(name.clone()),
+                            ))
+                        })?;
                     compose!(node_sig, ident.to_string());
                     resolved_nodes.push(node.span.sp(Node::SelfIdent));
                 } else {
@@ -355,7 +367,7 @@ pub fn resolve_sequence(
                 resolved_nodes.push(node.span.sp(Node::Literal(lit.clone())))
             }
             UnresolvedNode::Quotation(sub_nodes) => {
-                let (sub_nodes, sub_sig) = resolve_sequence(sub_nodes, defs, name, None)?;
+                let (sub_nodes, sub_sig) = resolve_sequence(sub_nodes, defs, purpose, None)?;
                 let node_sig = Signature::new(vec![], vec![Primitive::Quotation(sub_sig).into()]);
                 #[allow(unreachable_code)]
                 {
@@ -383,10 +395,17 @@ pub fn resolve_sequence(
         .unwrap_or_else(|| Signature::new(vec![], vec![]));
     if let Some(given) = given_sig {
         if given.data != sig {
-            return Err(given.span.sp(ResolutionError::SignatureMismatch {
-                name: name.data.clone(),
-                expected: given.data.clone(),
-                found: sig,
+            return Err(given.span.sp(if let Some(name) = purpose.name() {
+                ResolutionError::SignatureMismatch {
+                    name: name.clone(),
+                    expected: given.data.clone(),
+                    found: sig,
+                }
+            } else {
+                ResolutionError::WatchSignatureMismatch {
+                    expected: given.data.clone(),
+                    found: sig,
+                }
             }));
         }
     }
@@ -540,6 +559,15 @@ pub enum ResolutionError {
         expected: Signature,
         found: Signature,
     },
+    #[error(
+        "Signature mismatch \n\
+        Watch word is annotated with the signature {expected},\n\
+        but its body resolves to {found}"
+    )]
+    WatchSignatureMismatch {
+        expected: Signature,
+        found: Signature,
+    },
     #[error("There are multiple words in scope that match the name \"{ident}\"")]
     MultipleMatchingWords { ident: Ident },
     #[error(
@@ -561,6 +589,11 @@ pub enum ResolutionError {
         expected: usize,
         found: usize,
     },
+    #[error(
+        "Runnable words must have an empty before state,\n\
+        but this one has signature {0}"
+    )]
+    InvalidRunSignature(Signature),
 }
 
 fn format_wrong_param_count(ident: &Ident, expected: usize, found: usize) -> String {

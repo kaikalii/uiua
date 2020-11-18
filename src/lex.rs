@@ -27,6 +27,8 @@ pub enum TT {
     DoubleDash,
     Period,
     Colon,
+    WatchColon,
+    TestColon,
     Equals,
     Type,
     Data,
@@ -97,6 +99,8 @@ impl fmt::Display for TT {
             TT::CloseParen => ")".fmt(f),
             TT::DoubleDash => "--".fmt(f),
             TT::Colon => ":".fmt(f),
+            TT::WatchColon => ":>".fmt(f),
+            TT::TestColon => ":test>".fmt(f),
             TT::Equals => "=".fmt(f),
             TT::Type => "type".fmt(f),
             TT::Data => "data".fmt(f),
@@ -297,7 +301,6 @@ where
                 };
                 TT::CloseParen
             }
-            ':' => TT::Colon,
             '=' => TT::Equals,
             '`' => {
                 let is_doc = if let Some(Ok('`')) = self.peek() {
@@ -363,18 +366,18 @@ where
                     TT::Float(f)
                 } else {
                     match s.as_str() {
+                        ":>" => TT::WatchColon,
+                        ":test" => TT::TestColon,
+                        ":" => TT::Colon,
                         "." => TT::Period,
                         "---" => return Ok(None),
                         "--" => TT::DoubleDash,
                         s => {
-                            if s.contains('.') {
-                                self.put_back_str(&s, ".");
-                                return self.next_token();
-                            } else if s.contains("---") {
-                                self.put_back_str(&s, "---");
-                                return self.next_token();
-                            } else if s.contains("--") {
-                                self.put_back_str(&s, "--");
+                            if let Some(sub) = [":>", ":test", ":", ".", "---", "--"]
+                                .iter()
+                                .find(|&&sub| s.contains(sub))
+                            {
+                                self.put_back_str(s, sub);
                                 return self.next_token();
                             } else {
                                 match s {
@@ -448,5 +451,5 @@ fn escaped_char(c: char) -> Result<char, LexErrorKind> {
 }
 
 fn ident_char(c: char) -> bool {
-    c > ' ' && c as u32 != 127 && !"=:[]{}()".contains(c)
+    c > ' ' && c as u32 != 127 && !"=[]{}()".contains(c)
 }

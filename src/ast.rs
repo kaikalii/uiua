@@ -201,12 +201,36 @@ pub enum UnresolvedItem {
 
 #[derive(Debug, Clone)]
 pub struct UnresolvedWord {
-    pub name: Sp<String>,
+    pub purpose: Sp<UnresolvedWordPurpose>,
     pub doc: String,
     pub params: Sp<UnresolvedParams>,
     pub sig: Option<Sp<UnresolvedSignature>>,
     pub nodes: Vec<Sp<UnresolvedNode>>,
 }
+
+#[derive(Debug, Clone)]
+pub enum WordPurpose<T = Ident> {
+    Regular(T),
+    Test(T),
+    Watch,
+}
+
+impl<T> WordPurpose<T> {
+    pub fn name(&self) -> Option<&T> {
+        match self {
+            WordPurpose::Regular(name) | WordPurpose::Test(name) => Some(name),
+            WordPurpose::Watch => None,
+        }
+    }
+    pub fn should_run(&self) -> bool {
+        match self {
+            WordPurpose::Regular(_) => false,
+            WordPurpose::Test(_) | WordPurpose::Watch => true,
+        }
+    }
+}
+
+pub type UnresolvedWordPurpose = WordPurpose<String>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]

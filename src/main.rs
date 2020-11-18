@@ -5,6 +5,7 @@ mod command;
 mod lex;
 mod parse;
 mod resolve;
+mod runtime;
 mod span;
 mod types;
 

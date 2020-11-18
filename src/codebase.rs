@@ -17,7 +17,7 @@ use rayon::prelude::*;
 use serde::*;
 use sha3::*;
 
-use crate::{ast::*, builtin::*, parse::*, resolve::*, span::*, types::*};
+use crate::{ast::*, builtin::*, parse::*, resolve::*, runtime::*, span::*, types::*};
 
 pub struct Codebase {
     pub(crate) top_dir: Arc<PathBuf>,
@@ -138,17 +138,25 @@ impl Codebase {
             }
             errors_len = errors.len();
         }
+        // Insert properly resolved defs into the real defs
         if errors.is_empty() {
+            let mut watch_words = Vec::new();
             for item in unresolved_items {
-                resolve_item(
-                    &item,
-                    &self.path,
-                    DefsIO::Insertion {
-                        read: &temp_defs,
-                        write: &mut self.defs,
-                    },
-                )
-                .unwrap_or_else(|e| panic!("{}", e));
+                watch_words.extend(
+                    resolve_item(
+                        &item,
+                        &self.path,
+                        DefsIO::Insertion {
+                            read: &temp_defs,
+                            write: &mut self.defs,
+                        },
+                    )
+                    .unwrap_or_else(|e| panic!("{}", e)),
+                );
+            }
+            // Run watch words
+            for word in watch_words {
+                run(word, &self.defs);
             }
         }
         comp.errors
