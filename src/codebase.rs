@@ -477,6 +477,9 @@ where
         self.hashes.clear();
         self.entries.clear();
     }
+    /// Get all hashes that match the ident.
+    /// If ident has module, then O(1).
+    /// Otherwise, O(uses).
     pub fn hashes_by_ident(&self, ident: &Ident, query: Query) -> Vec<Hash> {
         let mut ident_hashes = Vec::new();
         for ident in once(ident.clone()).chain(
@@ -500,6 +503,9 @@ where
         }
         ident_hashes
     }
+    /// Get all entries that match the ident.
+    /// If ident has module, then O(1).
+    /// Otherwise, O(uses).
     pub fn entries_by_ident(
         &self,
         ident: &Ident,
@@ -509,6 +515,7 @@ where
             .into_iter()
             .filter_map(move |hash| self.entry_by_hash(&hash, query).map(|item| (hash, item)))
     }
+    /// Get the entry associated with a hash. O(1)
     pub fn entry_by_hash(&self, hash: &Hash, query: Query) -> Option<ItemEntry<T>> {
         if query.pending() {
             self.entries.get(hash).cloned()
@@ -537,6 +544,9 @@ where
             .insert(ident);
         hash
     }
+    /// Find all hashes that are joint on ones with the given ident.
+    /// If ident has module, then O(1).
+    /// Otherwise, O(uses).
     pub fn joint_ident<'a>(
         &'a self,
         ident: &Ident,
@@ -547,6 +557,9 @@ where
             .filter(move |(_, entry)| T::is_joint(entry.item.joinable(), joinable))
             .map(|(hash, _)| hash)
     }
+    /// Get a hash that is joint with the given entry.
+    /// If ident has module, then O(names).
+    /// Otherwise, O(uses * names).
     pub fn joint_entry(&self, hash: &Hash, entry: &ItemEntry<T>, query: Query) -> Option<Hash> {
         entry.names.iter().find_map(|ident| {
             self.joint_ident(ident, entry.item.joinable(), query)
