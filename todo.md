@@ -1,6 +1,5 @@
-- Finish type aliases
 - Runtime
 - Dealias command
 - Purity in signatures
-- Reisters
+- Registers
 - Lots more builtins

@@ -1,7 +1,8 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt, mem,
+    ops::*,
 };
 
 use colored::*;
@@ -10,6 +11,13 @@ use serde::*;
 use sha3::*;
 
 use crate::{ast::*, resolve::ResolutionError, span::*};
+
+pub trait TypeSet {
+    fn is_subset_of(&self, other: &Self) -> bool;
+    fn is_joint_with(&self, other: &Self) -> bool {
+        self.is_subset_of(other) || other.is_subset_of(self)
+    }
+}
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -34,7 +42,7 @@ impl Type {
                 Primitive::Tuple(types) => types.iter().flat_map(Type::generics).collect(),
                 _ => Vec::new(),
             },
-            Type::Alias(alias) => alias.ty.generics(),
+            Type::Alias(alias) => alias.params.iter().flat_map(Type::generics).collect(),
         };
         generics.sort_unstable();
         generics.dedup();
@@ -52,7 +60,7 @@ impl Type {
             (a, _) => *a = new,
         }
     }
-    fn visit<F>(&self, f: &mut F)
+    pub fn visit<F>(&self, f: &mut F)
     where
         F: FnMut(&Type),
     {
@@ -75,11 +83,15 @@ impl Type {
                 }
                 _ => {}
             },
-            Type::Alias(alias) => alias.ty.visit(f),
+            Type::Alias(alias) => {
+                for ty in alias.params.iter() {
+                    ty.visit(f)
+                }
+            }
             Type::Generic(_) => {}
         }
     }
-    fn mutate<F>(&mut self, f: &mut F)
+    pub fn mutate<F>(&mut self, f: &mut F)
     where
         F: FnMut(&mut Type),
     {
@@ -102,11 +114,18 @@ impl Type {
                 }
                 _ => {}
             },
-            Type::Alias(alias) => alias.ty.mutate(f),
+            Type::Alias(alias) => {
+                for ty in alias.params.iter_mut() {
+                    ty.mutate(f)
+                }
+            }
             Type::Generic(_) => {}
         }
     }
-    pub fn is_subset_of(&self, other: &Self) -> bool {
+}
+
+impl TypeSet for Type {
+    fn is_subset_of(&self, other: &Self) -> bool {
         match (self, other) {
             (_, Type::Generic(_)) => true,
             (Type::Generic(_), _) => false,
@@ -119,9 +138,9 @@ impl Type {
                 a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.is_subset_of(b))
             }
             (Type::Prim(a), Type::Prim(b)) => a == b,
-            (Type::Alias(a), Type::Alias(b)) => a.ty.is_subset_of(&b.ty),
-            (a, Type::Alias(b)) => a.is_subset_of(&b.ty),
-            (Type::Alias(a), b) => a.ty.is_subset_of(b),
+            (Type::Alias(a), Type::Alias(b)) => a.resolve().is_subset_of(&b.resolve()),
+            (a, Type::Alias(b)) => a.is_subset_of(&b.resolve()),
+            (Type::Alias(a), b) => a.resolve().is_subset_of(b),
         }
     }
 }
@@ -159,7 +178,7 @@ impl fmt::Display for Type {
         match self {
             Type::Prim(prim) => prim.fmt(f),
             Type::Generic(g) => g.name.fmt(f),
-            Type::Alias(alias) => alias.name.fmt(f),
+            Type::Alias(alias) => alias.fmt(f),
         }
     }
 }
@@ -200,9 +219,87 @@ impl Ord for Generic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AliasName {
+pub struct TypeAlias {
     pub name: String,
+    pub params: TypeParams,
     pub unique: bool,
+    pub ty: Type,
+}
+
+impl TypeAlias {
+    pub fn resolve(&self) -> Type {
+        let conv: BTreeMap<_, _> = self
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| (i as u8, ty))
+            .collect();
+        let mut res = self.ty.clone();
+        res.mutate(&mut |ty| {
+            if let Type::Generic(g) = ty {
+                if let Some(new) = conv.get(&g.index).copied() {
+                    *ty = new.clone();
+                }
+            }
+        });
+        res
+    }
+}
+
+impl TreeHash for TypeAlias {
+    fn hash(&self, sha: &mut Sha3_256) {
+        if self.unique {
+            sha.update(&self.name);
+        }
+        self.ty.hash(sha);
+    }
+}
+
+impl fmt::Display for TypeAlias {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}{{{}}}", self.name, self.params)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TypeParams(pub Vec<Type>);
+
+impl TypeSet for TypeParams {
+    fn is_subset_of(&self, other: &Self) -> bool {
+        self.len() == other.len()
+            && self
+                .iter()
+                .zip(other.iter())
+                .all(|(a, b)| a.is_subset_of(b))
+    }
+}
+
+impl fmt::Display for TypeParams {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.is_empty() {
+            Ok(())
+        } else {
+            let list = self
+                .iter()
+                .map(|ty| ty.to_string())
+                .intersperse(" ".into())
+                .collect::<String>();
+            write!(f, "{}", list)
+        }
+    }
+}
+
+impl Deref for TypeParams {
+    type Target = Vec<Type>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for TypeParams {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
@@ -312,7 +409,10 @@ pub struct UnresolvedField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnresolvedType {
     Prim(UnresolvedPrimitive),
-    Ident(Ident),
+    Ident {
+        ident: Sp<Ident>,
+        params: Sp<Vec<Sp<UnresolvedType>>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,7 +433,7 @@ impl UnresolvedSignature {
 impl Signature {
     pub fn new(before: Vec<Type>, after: Vec<Type>) -> Self {
         let mut sig = Signature { before, after };
-        let reassign: HashMap<u8, (u8, String)> = sig
+        let reassign: BTreeMap<u8, (u8, String)> = sig
             .generics()
             .into_iter()
             .zip('a'..)
@@ -486,12 +586,15 @@ impl Signature {
         }
         me
     }
-    /// Check if two signatures are capable of describing the same thing
-    pub fn is_joint_with(&self, other: &Self) -> bool {
-        self.is_subset_of(other) || other.is_subset_of(self)
+    pub fn imagine_input_sig(&self) -> Self {
+        let after = self.before.clone();
+        Signature::new(Vec::new(), after)
     }
+}
+
+impl TypeSet for Signature {
     /// Check if this signature is a subset of some other signature
-    pub fn is_subset_of(&self, other: &Self) -> bool {
+    fn is_subset_of(&self, other: &Self) -> bool {
         // println!("{} is subset of {}?", self, other);
         if self.before.len() != other.before.len() || self.after.len() != other.after.len() {
             let a = self.minimum_equivalent();
@@ -520,10 +623,6 @@ impl Signature {
         }
         // println!("is subset");
         true
-    }
-    pub fn imagine_input_sig(&self) -> Self {
-        let after = self.before.clone();
-        Signature::new(Vec::new(), after)
     }
 }
 
@@ -568,6 +667,9 @@ impl TypeResolver {
                 }
                 _ => {}
             },
+            (Type::Alias(a), Type::Alias(b)) => self.align(&a.ty, &b.ty),
+            (a, Type::Alias(b)) => self.align(a, &b.ty),
+            (Type::Alias(a), b) => self.align(&a.ty, b),
         }
     }
     fn insert(&mut self, a: Generic, ty: &Type) {

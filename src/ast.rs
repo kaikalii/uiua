@@ -123,23 +123,6 @@ pub enum WordKind {
     Builtin(BuiltinWord),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TypeAlias {
-    pub name: String,
-    pub unique: bool,
-    pub params: Vec<String>,
-    pub ty: Type,
-}
-
-impl TreeHash for TypeAlias {
-    fn hash(&self, sha: &mut Sha3_256) {
-        if self.unique {
-            sha.update(&self.name);
-        }
-        self.ty.hash(sha);
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Node {

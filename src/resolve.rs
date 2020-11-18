@@ -131,9 +131,9 @@ pub fn resolve_type_alias(
     Ok(match &alias.kind.data {
         UnresolvedTypeAliasKind::Enum(variants) => {
             let res_alias = TypeAlias {
-                params: Vec::new(),
-                unique: alias.unique,
                 name: alias.name.data.clone(),
+                params: Default::default(),
+                unique: alias.unique,
                 ty: Primitive::Nat.into(),
             };
             let prim_ty = Type::Alias(Box::new(res_alias.clone()));
@@ -162,7 +162,15 @@ pub fn resolve_type_alias(
                 .collect::<Result<_, _>>()?;
             let field_types: Vec<Type> = fields.iter().map(|(_, ty)| ty.clone()).collect();
             let res_alias = TypeAlias {
-                params: Vec::new(),
+                params: TypeParams(
+                    params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, name)| {
+                            Type::Generic(Generic::new(name.data.clone(), i as u8, false))
+                        })
+                        .collect(),
+                ),
                 unique: alias.unique,
                 name: alias.name.data.clone(),
                 ty: Primitive::Tuple(field_types.clone()).into(),
@@ -410,7 +418,7 @@ pub fn resolve_type(
     defs: &Defs,
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Type, ResolutionError> {
-    if let UnresolvedType::Ident(ident) = &**ty {
+    if let UnresolvedType::Ident { ident, .. } = &**ty {
         if let Some(i) = params.iter().position(|param| ident.single_and_eq(&param)) {
             Ok(Type::Generic(Generic::new(
                 ident.name.clone(),
@@ -428,15 +436,41 @@ pub fn resolve_type(
 fn resolve_concrete_type(
     ty: &Sp<UnresolvedType>,
     defs: &Defs,
-    params: &Sp<UnresolvedParams>,
+    word_params: &Sp<UnresolvedParams>,
 ) -> SpResult<Type, ResolutionError> {
     match &ty.data {
-        UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
-        UnresolvedType::Ident(name) => {
-            if let Some((_, alias)) = defs.types.entries_by_ident(name, Query::All).next() {
-                Ok(alias.item.ty)
+        UnresolvedType::Prim(prim) => {
+            Ok(Type::Prim(resolve_prim(prim, defs, ty.span, word_params)?))
+        }
+        UnresolvedType::Ident {
+            ident,
+            params: type_params,
+        } => {
+            if let Some((_, alias)) = defs.types.entries_by_ident(ident, Query::All).next() {
+                if alias.item.params.len() != type_params.len() {
+                    let error_span = if type_params.len() == 0 {
+                        ident.span
+                    } else {
+                        type_params.span
+                    };
+                    return Err(error_span.sp(ResolutionError::WrongTypeParamCount {
+                        ident: ident.data.clone(),
+                        expected: alias.item.params.len(),
+                        found: type_params.len(),
+                    }));
+                }
+                let alias = TypeAlias {
+                    params: TypeParams(
+                        type_params
+                            .iter()
+                            .map(|ty| resolve_type(ty, defs, word_params))
+                            .collect::<Result<_, _>>()?,
+                    ),
+                    ..alias.item
+                };
+                Ok(Type::Alias(alias.into()))
             } else {
-                Err(ty.span.sp(ResolutionError::UnknownType(name.clone())))
+                Err(ty.span.sp(ResolutionError::UnknownType(ident.data.clone())))
             }
         }
     }
@@ -489,7 +523,8 @@ pub enum ResolutionError {
     UnknownType(Ident),
     #[error(
         "Incompatible word \"{ident}\"\n\
-        \"{ident}\" exists, but no versions of it are compatible with the before state ( {} )",
+        \"{ident}\" exists, but no versions of it are\n\
+        compatible with the before state ( {} )",
         format_state(&input_sig.after)
     )]
     IncompatibleWord { ident: Ident, input_sig: Signature },
@@ -508,7 +543,8 @@ pub enum ResolutionError {
     #[error("There are multiple words in scope that match the name \"{ident}\"")]
     MultipleMatchingWords { ident: Ident },
     #[error(
-        "Multiple words with the name \"{ident}\" and a signature compatible with {sig} are declared\n\
+        "Multiple words with the name \"{ident}\"\n\
+        and a signature compatible with {sig} are declared\n\
         Delete or rename one of them"
     )]
     NameAndSignatureExist { ident: Ident, sig: Signature },
@@ -519,6 +555,23 @@ pub enum ResolutionError {
     AliasNameExists(Ident),
     #[error("Unknown module {0}")]
     UnknownModule(String),
+    #[error("{}", format_wrong_param_count(ident, *expected, *found))]
+    WrongTypeParamCount {
+        ident: Ident,
+        expected: usize,
+        found: usize,
+    },
+}
+
+fn format_wrong_param_count(ident: &Ident, expected: usize, found: usize) -> String {
+    format!(
+        "{} expects {} type parameter{}, but {} {} given",
+        ident,
+        expected,
+        if expected == 1 { "" } else { "s" },
+        found,
+        if found == 1 { "was" } else { "were" }
+    )
 }
 
 fn format_state(types: &[Type]) -> String {

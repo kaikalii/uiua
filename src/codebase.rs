@@ -243,10 +243,9 @@ pub trait CodebaseItem:
 {
     /// The type that determines whether two of this item that have the same
     /// name overlap each other
-    type Joinable;
+    type Joinable: TypeSet;
     const FOLDER: &'static str;
     fn joinable(&self) -> &Self::Joinable;
-    fn is_joint(a: &Self::Joinable, b: &Self::Joinable) -> bool;
     fn items(defs: &Defs) -> &ItemDefs<Self>;
     fn hash_finish(&self, _: &ItemDefs<Self>) -> Hash {
         let mut sha = Sha3_256::default();
@@ -305,9 +304,6 @@ impl CodebaseItem for Word {
     fn joinable(&self) -> &Self::Joinable {
         &self.sig
     }
-    fn is_joint(a: &Self::Joinable, b: &Self::Joinable) -> bool {
-        a.is_joint_with(b)
-    }
     fn items(defs: &Defs) -> &ItemDefs<Self> {
         &defs.words
     }
@@ -330,13 +326,10 @@ impl CodebaseItem for Word {
 }
 
 impl CodebaseItem for TypeAlias {
-    type Joinable = Vec<String>;
+    type Joinable = TypeParams;
     const FOLDER: &'static str = "types";
     fn joinable(&self) -> &Self::Joinable {
         &self.params
-    }
-    fn is_joint(_: &Self::Joinable, _: &Self::Joinable) -> bool {
-        true
     }
     fn items(defs: &Defs) -> &ItemDefs<Self> {
         &defs.types
@@ -562,7 +555,7 @@ where
         query: Query,
     ) -> impl Iterator<Item = Hash> + 'a {
         self.entries_by_ident(ident, query)
-            .filter(move |(_, entry)| T::is_joint(entry.item.joinable(), joinable))
+            .filter(move |(_, entry)| entry.item.joinable().is_joint_with(joinable))
             .map(|(hash, _)| hash)
     }
     /// Get a hash that is joint with the given entry.

@@ -135,7 +135,23 @@ impl Parser {
                 (None, "Float") => UnresolvedType::Prim(Primitive::Float),
                 (None, "Char") => UnresolvedType::Prim(Primitive::Char),
                 (None, "Text") => UnresolvedType::Prim(Primitive::Text),
-                _ => UnresolvedType::Ident(ident.data),
+                _ => {
+                    let mut params_start = ident.span.end;
+                    let mut params_end = params_start;
+                    // Try matching given type parameters
+                    let mut params = Vec::new();
+                    if let Some(open_curly) = self.try_mat(TT::OpenCurly) {
+                        params_start = open_curly.span.start;
+                        while let Some(ty) = self.try_ty()? {
+                            params.push(ty);
+                        }
+                        params_end = self.mat("}", TT::CloseCurly)?.span.end;
+                    }
+                    UnresolvedType::Ident {
+                        ident,
+                        params: Span::new(params_start, params_end).sp(params),
+                    }
+                }
             }))
         } else if let Some(open_paren) = self.try_mat(TT::OpenParen) {
             let start = open_paren.span.start;
