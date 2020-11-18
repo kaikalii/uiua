@@ -282,9 +282,9 @@ impl Parser {
             nodes,
         }))
     }
-    /// Match a type alias
-    fn alias(&mut self, type_token: Sp<()>) -> Result<Sp<UnresolvedTypeAlias>, ParseError> {
-        let start = type_token.span.start;
+    /// Match a data type alias
+    fn data(&mut self, data_token: Sp<()>) -> Result<Sp<UnresolvedTypeAlias>, ParseError> {
+        let start = data_token.span.start;
         // Match the name
         let name = self.mat("name", TT::ident)?;
         // Match type parameters
@@ -293,7 +293,15 @@ impl Parser {
         self.mat('=', TT::Equals)?;
         let first = self.mat("name", TT::ident)?;
         let kind_start = first.span.start;
-        Ok(if self.try_mat(TT::Colon).is_some() {
+        let is_record_type = if self.try_mat(TT::Colon).is_some() {
+            true
+        } else if params.is_empty() {
+            false
+        } else {
+            self.mat(':', TT::Colon)?;
+            true
+        };
+        Ok(if is_record_type {
             // Record
             let first_ty = self.ty()?;
             let mut fields = vec![(first.span - first_ty.span).sp(UnresolvedField {
@@ -307,35 +315,25 @@ impl Parser {
             }
             Span::new(start, self.loc).sp(UnresolvedTypeAlias {
                 name,
-                params,
-                kind: Span::new(kind_start, self.loc).sp(UnresolvedTypeAliasKind::Record(fields)),
+                unique: true,
+                kind: Span::new(kind_start, self.loc)
+                    .sp(UnresolvedTypeAliasKind::Record { params, fields }),
             })
         } else {
             // Enum
             let mut variant_name = first;
             let mut variants = Vec::new();
             loop {
-                let variant_start = variant_name.span.start;
-                let types_start = variant_name.span.end;
-                let mut variant_end = variant_name.span.end;
-                let mut types = Vec::new();
-                while let Some(ty) = self.try_ty()? {
-                    variant_end = ty.span.end;
-                    types.push(ty);
-                }
-                variants.push(Span::new(variant_start, variant_end).sp(UnresolvedVariant {
-                    name: variant_name,
-                    types: Span::new(types_start, variant_end).sp(types),
-                }));
-                variant_name = if self.try_mat(TT::Equals).is_some() {
-                    self.mat("name", TT::ident)?
+                variants.push(variant_name);
+                variant_name = if let Some(name) = self.try_mat(TT::ident) {
+                    name
                 } else {
                     break;
                 }
             }
             Span::new(start, self.loc).sp(UnresolvedTypeAlias {
                 name,
-                params,
+                unique: true,
                 kind: Span::new(kind_start, self.loc).sp(UnresolvedTypeAliasKind::Enum(variants)),
             })
         })
@@ -357,8 +355,8 @@ impl Parser {
                 return Err(ParseErrorKind::DocCommentOnUse.span(module.span));
             }
             Ok(UnresolvedItem::Use(module))
-        } else if let Some(type_token) = self.try_mat(TT::Type) {
-            self.alias(type_token).map(UnresolvedItem::Type)
+        } else if let Some(data_token) = self.try_mat(TT::Data) {
+            self.data(data_token).map(UnresolvedItem::Type)
         } else if let Some(token) = self.next_token() {
             Err(ParseErrorKind::ExpectedFound {
                 expected: "':', 'type', 'use', or comment".into(),
@@ -395,7 +393,7 @@ where
         whitespace: None,
         loc: Loc::new(1, 1),
     };
-    while !parser.tokens.as_slice().is_empty() {
+    while !(parser.tokens.as_slice().is_empty() && parser.put_back.is_none()) {
         if let Some(item) = parser.item()? {
             parser.items.push(item);
         }

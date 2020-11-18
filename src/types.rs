@@ -11,10 +11,10 @@ use sha3::*;
 
 use crate::{ast::*, resolve::ResolutionError, span::*};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Type {
-    Prim(Primitive),
+    Prim(Primitive, Option<AliasName>),
     Generic(Generic),
 }
 
@@ -22,7 +22,7 @@ impl Type {
     pub fn generics(&self) -> Vec<u8> {
         let mut generics = match self {
             Type::Generic(g) => vec![g.index],
-            Type::Prim(prim) => match prim {
+            Type::Prim(prim, _) => match prim {
                 Primitive::List(inner) => inner.generics(),
                 Primitive::Quotation(sig) => sig
                     .before
@@ -56,7 +56,7 @@ impl Type {
     {
         f(self);
         match self {
-            Type::Prim(prim) => match prim {
+            Type::Prim(prim, _) => match prim {
                 Primitive::List(inner) => inner.visit(f),
                 Primitive::Quotation(sig) => {
                     for ty in &sig.before {
@@ -82,7 +82,7 @@ impl Type {
     {
         f(self);
         match self {
-            Type::Prim(prim) => match prim {
+            Type::Prim(prim, _) => match prim {
                 Primitive::List(inner) => inner.mutate(f),
                 Primitive::Quotation(sig) => {
                     for ty in &mut sig.before {
@@ -106,15 +106,17 @@ impl Type {
         match (self, other) {
             (_, Type::Generic(_)) => true,
             (Type::Generic(_), _) => false,
-            (_, Type::Prim(Primitive::Never)) => true,
-            (Type::Prim(Primitive::List(a)), Type::Prim(Primitive::List(b))) => a.is_subset_of(b),
-            (Type::Prim(Primitive::Quotation(a)), Type::Prim(Primitive::Quotation(b))) => {
+            (_, Type::Prim(Primitive::Never, _)) => true,
+            (Type::Prim(Primitive::List(a), _), Type::Prim(Primitive::List(b), _)) => {
                 a.is_subset_of(b)
             }
-            (Type::Prim(Primitive::Tuple(a)), Type::Prim(Primitive::Tuple(b))) => {
+            (Type::Prim(Primitive::Quotation(a), _), Type::Prim(Primitive::Quotation(b), _)) => {
+                a.is_subset_of(b)
+            }
+            (Type::Prim(Primitive::Tuple(a), _), Type::Prim(Primitive::Tuple(b), _)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.is_subset_of(b))
             }
-            (Type::Prim(a), Type::Prim(b)) => a == b,
+            (Type::Prim(a, _), Type::Prim(b, _)) => a == b,
         }
     }
 }
@@ -123,22 +125,45 @@ impl TreeHash for Type {
     fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
         match self {
-            Type::Prim(prim) => prim.hash(sha),
+            Type::Prim(prim, alias_name) => {
+                prim.hash(sha);
+                if let Some(an) = alias_name {
+                    if an.unique {
+                        sha.update(&an.name);
+                    }
+                }
+            }
             Type::Generic(g) => sha.update(&[g.index]),
+        }
+    }
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Type::Prim(a, a_name), Type::Prim(b, b_name)) => a == b && a_name == b_name,
+            (Type::Generic(a), Type::Generic(b)) => a == b,
+            _ => false,
         }
     }
 }
 
 impl From<Primitive> for Type {
     fn from(prim: Primitive) -> Self {
-        Type::Prim(prim)
+        Type::Prim(prim, None)
     }
 }
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Type::Prim(prim) => prim.fmt(f),
+            Type::Prim(prim, an) => {
+                if let Some(an) = an {
+                    an.name.fmt(f)
+                } else {
+                    prim.fmt(f)
+                }
+            }
             Type::Generic(g) => g.name.fmt(f),
         }
     }
@@ -177,6 +202,12 @@ impl Ord for Generic {
     fn cmp(&self, other: &Self) -> Ordering {
         self.index.cmp(&other.index)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AliasName {
+    pub name: String,
+    pub unique: bool,
 }
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
@@ -264,26 +295,23 @@ impl fmt::Display for Primitive {
 #[derive(Debug, Clone)]
 pub struct UnresolvedTypeAlias {
     pub name: Sp<String>,
-    pub params: Sp<UnresolvedParams>,
+    pub unique: bool,
     pub kind: Sp<UnresolvedTypeAliasKind>,
 }
 
 #[derive(Debug, Clone)]
 pub enum UnresolvedTypeAliasKind {
-    Enum(Vec<Sp<UnresolvedVariant>>),
-    Record(Vec<Sp<UnresolvedField>>),
+    Enum(Vec<Sp<String>>),
+    Record {
+        params: Sp<UnresolvedParams>,
+        fields: Vec<Sp<UnresolvedField>>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct UnresolvedField {
     pub name: Sp<String>,
     pub ty: Sp<UnresolvedType>,
-}
-
-#[derive(Debug, Clone)]
-pub struct UnresolvedVariant {
-    pub name: Sp<String>,
-    pub types: Sp<Vec<Sp<UnresolvedType>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -528,7 +556,7 @@ impl TypeResolver {
             (ref a, Type::Generic(b)) => {
                 self.insert(b.clone(), a);
             }
-            (Type::Prim(a), Type::Prim(b)) => match (a, b) {
+            (Type::Prim(a, _), Type::Prim(b, _)) => match (a, b) {
                 (Primitive::List(a), Primitive::List(b)) => self.align(a, b),
                 (Primitive::Quotation(a), Primitive::Quotation(b)) => {
                     for (a, b) in a.before.iter().rev().zip(b.before.iter().rev()) {
@@ -628,7 +656,7 @@ static SIG_COLORS: &[Color] = &[
 
 fn format_ty(ty: &Type, s: &mut String, i: usize) {
     match ty {
-        Type::Prim(Primitive::Quotation(sig)) => sig.format(s, i),
+        Type::Prim(Primitive::Quotation(sig), _) => sig.format(s, i),
         _ => s.push_str(&ty.to_string()),
     }
 }

@@ -125,12 +125,14 @@ pub enum WordKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeAlias {
+    pub unique_name: Option<String>,
     pub params: Vec<String>,
     pub ty: Type,
 }
 
 impl TreeHash for TypeAlias {
     fn hash(&self, sha: &mut Sha3_256) {
+        sha.update(self.unique_name.as_deref().unwrap_or_default());
         self.ty.hash(sha);
     }
 }

@@ -1,31 +1,53 @@
+use std::iter::*;
+
 use itertools::*;
 
-use crate::{ast::*, codebase::*, span::*, types::*};
+use crate::{ast::*, builtin::*, codebase::*, span::*, types::*};
+
+pub enum DefsIO<'a> {
+    Resolution(&'a mut Defs),
+    Insertion { read: &'a Defs, write: &'a mut Defs },
+}
+
+impl<'a> DefsIO<'a> {
+    fn read(&self) -> &Defs {
+        match self {
+            DefsIO::Resolution(defs) => defs,
+            DefsIO::Insertion { read, .. } => read,
+        }
+    }
+    fn write(&mut self) -> &mut Defs {
+        match self {
+            DefsIO::Resolution(defs) => defs,
+            DefsIO::Insertion { write, .. } => write,
+        }
+    }
+}
 
 pub fn resolve_item(
     item: &UnresolvedItem,
     path: &Option<String>,
-    maybe_read_defs: Option<&Defs>,
-    write_defs: &mut Defs,
+    mut defs: DefsIO,
 ) -> SpResult<(), ResolutionError> {
-    let read_defs = maybe_read_defs.unwrap_or(write_defs);
     match &item {
         // Uses
         UnresolvedItem::Use(module) => {
-            let module_exists = read_defs
+            let module_exists = defs
+                .read()
                 .words
                 .names
                 .0
                 .keys()
                 .any(|ident| ident.module.as_ref().map_or(false, |m| m == &module.data))
-                || read_defs
+                || defs
+                    .read()
                     .types
                     .names
                     .0
                     .keys()
                     .any(|ident| ident.module.as_ref().map_or(false, |m| m == &module.data));
             if module_exists {
-                read_defs.uses.lock().unwrap().insert(module.data.clone());
+                defs.read().uses.lock().unwrap().insert(module.data.clone());
                 Ok(())
             } else {
                 Err(module.clone().map(ResolutionError::UnknownModule))
@@ -33,26 +55,26 @@ pub fn resolve_item(
         }
         // Words
         UnresolvedItem::Word(uw) => {
-            let word = resolve_word(&uw, read_defs)?;
+            let word = resolve_word(&uw, defs.read())?;
             let ident = Ident::new(path.clone(), uw.name.data.clone());
             let error_span = if let Some(unres_sig) = &uw.sig {
                 uw.name.span - unres_sig.span
             } else {
                 uw.name.span
             };
-            insert_word(ident, word, maybe_read_defs, write_defs, error_span)
+            insert_word(ident, word, &mut defs, error_span)
         }
         // Type aliases
         UnresolvedItem::Type(ut) => {
             // Resolve
-            let (alias, words) = resolve_type_alias(ut, read_defs)?;
+            let (alias, words) = resolve_type_alias(ut, defs.read())?;
             // Insert alias
             let ident = Ident::new(path.clone(), ut.name.data.clone());
-            insert_type_alias(ident, alias, maybe_read_defs, write_defs, ut.span)?;
+            insert_type_alias(ident, alias, &mut defs, ut.span)?;
             // Insert words
             for (name, word) in words {
                 let ident = Ident::new(path.clone(), name);
-                insert_word(ident, word, maybe_read_defs, write_defs, ut.span)?;
+                insert_word(ident, word, &mut defs, ut.span)?;
             }
             Ok(())
         }
@@ -62,14 +84,13 @@ pub fn resolve_item(
 pub fn insert_word(
     ident: Ident,
     word: Word,
-    read_defs: Option<&Defs>,
-    write_defs: &mut Defs,
+    defs: &mut DefsIO,
     error_span: Span,
 ) -> SpResult<(), ResolutionError> {
-    let read_defs = read_defs.unwrap_or(write_defs);
-    let hash = word.hash_finish(&read_defs.words);
+    let hash = word.hash_finish(&defs.read().words);
     // Check for identical word
-    if read_defs
+    if defs
+        .read()
         .words
         .joint_ident(&ident, &word.sig, Query::Pending)
         .any(|h| h != hash)
@@ -79,36 +100,140 @@ pub fn insert_word(
             sig: word.sig,
         }));
     }
-    write_defs.words.insert(ident, word);
+    defs.write().words.insert(ident, word);
     Ok(())
 }
 
 pub fn insert_type_alias(
     ident: Ident,
     alias: TypeAlias,
-    read_defs: Option<&Defs>,
-    write_defs: &mut Defs,
+    defs: &mut DefsIO,
     error_span: Span,
 ) -> SpResult<(), ResolutionError> {
-    let read_defs = read_defs.unwrap_or(write_defs);
-    let hash = alias.hash_finish(&read_defs.types);
+    let hash = alias.hash_finish(&defs.read().types);
     // Check for identical type
-    if read_defs
+    if defs
+        .read()
         .types
-        .joint_ident(&ident, &(), Query::Pending)
+        .joint_ident(&ident, &alias.unique_name, Query::Pending)
         .any(|h| h != hash)
     {
         return Err(error_span.sp(ResolutionError::AliasNameExists(ident)));
     }
-    write_defs.types.insert(ident, alias);
+    defs.write().types.insert(ident, alias);
     Ok(())
 }
 
 pub fn resolve_type_alias(
-    _alias: &Sp<UnresolvedTypeAlias>,
-    _defs: &Defs,
+    alias: &Sp<UnresolvedTypeAlias>,
+    defs: &Defs,
 ) -> SpResult<(TypeAlias, Vec<(String, Word)>), ResolutionError> {
-    todo!()
+    Ok(match &alias.kind.data {
+        UnresolvedTypeAliasKind::Enum(variants) => {
+            let prim_ty = Type::Prim(
+                Primitive::Nat,
+                Some(AliasName {
+                    name: alias.name.data.clone(),
+                    unique: alias.unique,
+                }),
+            );
+            let words: Vec<_> = variants
+                .iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    (
+                        format!("{}-{}", alias.name.data, name.data),
+                        Word {
+                            doc: format!("The {} variant of {}", name.data, alias.name.data),
+                            sig: Signature::new(vec![], vec![prim_ty.clone()]),
+                            kind: WordKind::Uiua(vec![Node::Literal(Literal::Nat(i as u64))]),
+                        },
+                    )
+                })
+                .collect();
+            let alias = TypeAlias {
+                params: Vec::new(),
+                unique_name: if alias.unique {
+                    Some(alias.name.data.clone())
+                } else {
+                    None
+                },
+                ty: prim_ty,
+            };
+            (alias, words)
+        }
+        UnresolvedTypeAliasKind::Record { params, fields } => {
+            let fields: Vec<(String, Type)> = fields
+                .iter()
+                .map(|field| {
+                    resolve_type(&field.ty, defs, params).map(|ty| (field.name.data.clone(), ty))
+                })
+                .collect::<Result<_, _>>()?;
+            let field_types: Vec<Type> = fields.iter().map(|(_, ty)| ty.clone()).collect();
+            let prim_ty = Type::Prim(
+                Primitive::Tuple(field_types.clone()),
+                Some(AliasName {
+                    name: alias.name.data.clone(),
+                    unique: alias.unique,
+                }),
+            );
+            let fields_len = fields.len();
+            // Constructor
+            let mut words = vec![(
+                format!("<{}>", alias.name.data),
+                Word {
+                    doc: format!(
+                        "Construct a {} from {} values",
+                        alias.name.data,
+                        fields
+                            .iter()
+                            .map(|(name, _)| name.as_str())
+                            .intersperse(", ")
+                            .collect::<String>()
+                    ),
+                    sig: Signature::new(field_types, vec![prim_ty.clone()]),
+                    kind: WordKind::Builtin(BuiltinWord::TupleCompose(fields_len as u8)),
+                },
+            )];
+            // Getters and Setters
+            words.extend(fields.into_iter().enumerate().flat_map(|(i, (name, ty))| {
+                // Getters
+                once((
+                    format!("{}>>", name),
+                    Word {
+                        doc: format!("Push the top {}'s {} value", alias.name.data, name),
+                        sig: Signature::new(
+                            vec![prim_ty.clone()],
+                            vec![prim_ty.clone(), ty.clone()],
+                        ),
+                        kind: WordKind::Builtin(BuiltinWord::TupleGet(fields_len as u8, i as u8)),
+                    },
+                ))
+                // Setters
+                .chain(once((
+                    format!(">>{}", name),
+                    Word {
+                        doc: format!(
+                            "Pop the top value and set the underlying {}'s {} value",
+                            alias.name.data, name
+                        ),
+                        sig: Signature::new(vec![prim_ty.clone(), ty], vec![prim_ty.clone()]),
+                        kind: WordKind::Builtin(BuiltinWord::TupleGet(fields_len as u8, i as u8)),
+                    },
+                )))
+            }));
+            let alias = TypeAlias {
+                params: Vec::new(),
+                unique_name: if alias.unique {
+                    Some(alias.name.data.clone())
+                } else {
+                    None
+                },
+                ty: prim_ty,
+            };
+            (alias, words)
+        }
+    })
 }
 
 pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
@@ -324,7 +449,9 @@ fn resolve_concrete_type(
     params: &Sp<UnresolvedParams>,
 ) -> SpResult<Type, ResolutionError> {
     match &ty.data {
-        UnresolvedType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?)),
+        UnresolvedType::Prim(prim) => {
+            Ok(Type::Prim(resolve_prim(prim, defs, ty.span, params)?, None))
+        }
         UnresolvedType::Ident(name) => {
             if let Some((_, alias)) = defs.types.entries_by_ident(name, Query::All).next() {
                 Ok(alias.item.ty)

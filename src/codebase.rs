@@ -129,7 +129,9 @@ impl Codebase {
         loop {
             errors = unresolved_items
                 .iter()
-                .filter_map(|item| resolve_item(item, &self.path, None, &mut temp_defs).err())
+                .filter_map(|item| {
+                    resolve_item(item, &self.path, DefsIO::Resolution(&mut temp_defs)).err()
+                })
                 .collect();
             if errors.len() == errors_len {
                 break;
@@ -138,7 +140,15 @@ impl Codebase {
         }
         if errors.is_empty() {
             for item in unresolved_items {
-                resolve_item(&item, &self.path, Some(&temp_defs), &mut self.defs).unwrap();
+                resolve_item(
+                    &item,
+                    &self.path,
+                    DefsIO::Insertion {
+                        read: &temp_defs,
+                        write: &mut self.defs,
+                    },
+                )
+                .unwrap_or_else(|e| panic!("{}", e));
             }
         }
         comp.errors
@@ -319,13 +329,11 @@ impl CodebaseItem for Word {
     }
 }
 
-static TYPE_JOINABLE: () = ();
-
 impl CodebaseItem for TypeAlias {
-    type Joinable = ();
+    type Joinable = Option<String>;
     const FOLDER: &'static str = "types";
     fn joinable(&self) -> &Self::Joinable {
-        &TYPE_JOINABLE
+        &self.unique_name
     }
     fn is_joint(_: &Self::Joinable, _: &Self::Joinable) -> bool {
         true
@@ -612,10 +620,13 @@ impl Compilation {
         println!();
         if self.errors.is_empty() {
             // Words
+            let mut word_data = Vec::new();
             for (hash, entry) in &defs.words.entries {
                 let message = if let Some(cb_entry) = defs.words.entry_by_hash(hash, Query::Saved) {
                     if entry.names.intersection(&cb_entry.names).count() == 0 {
                         format!("as alias for {}", cb_entry.format_names())
+                    } else if entry.names.len() > cb_entry.names.len() {
+                        "with new alias".into()
                     } else {
                         "no change".bright_black().to_string()
                     }
@@ -624,10 +635,36 @@ impl Compilation {
                 } else {
                     "and ready to be added".into()
                 };
+                word_data.push((entry.format_names(), entry.item.sig.to_string(), message));
+            }
+            word_data.sort();
+            for (names, sig, message) in word_data {
+                println!("{} {} {} {}", names, sig, "OK".bright_green(), message);
+            }
+            // Type aliases
+            let mut type_data = Vec::new();
+            for (hash, entry) in &defs.types.entries {
+                let message = if let Some(cb_entry) = defs.types.entry_by_hash(hash, Query::Saved) {
+                    if entry.names.intersection(&cb_entry.names).count() == 0 {
+                        format!("as alias for {}", cb_entry.format_names())
+                    } else if entry.names.len() > cb_entry.names.len() {
+                        "with new alias".into()
+                    } else {
+                        "no change".bright_black().to_string()
+                    }
+                } else if defs.types.joint_entry(hash, entry, Query::Saved).is_some() {
+                    "and ready to be updated".into()
+                } else {
+                    "and ready to be added".into()
+                };
+                type_data.push((entry.format_names(), message));
+            }
+            type_data.sort();
+            for (names, message) in type_data {
                 println!(
                     "{} {} {} {}",
-                    entry.format_names(),
-                    entry.item.sig,
+                    "type".magenta(),
+                    names,
                     "OK".bright_green(),
                     message
                 );

@@ -40,7 +40,7 @@ impl Sub for Span {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Sp<T> {
     pub data: T,
     pub span: Span,
@@ -94,6 +94,16 @@ impl<T> Deref for Sp<T> {
 impl<T> DerefMut for Sp<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.data
+    }
+}
+
+impl<T> fmt::Debug for Sp<T>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.data.fmt(f)?;
+        write!(f, " {}:{}", self.span.start.line, self.span.start.col)
     }
 }
 

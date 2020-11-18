@@ -124,7 +124,10 @@ impl BuiltinWord {
             BuiltinWord::TupleGet(size, n) => {
                 let params: Vec<_> = DefaultParams::default().take(*size as usize).collect();
                 let output = params[*n as usize].clone();
-                (vec![Primitive::Tuple(params).into()], vec![output])
+                (
+                    vec![Primitive::Tuple(params.clone()).into()],
+                    vec![Primitive::Tuple(params).into(), output],
+                )
             }
             BuiltinWord::TupleSet(size, n) => {
                 let params: Vec<_> = DefaultParams::default().take(*size as usize).collect();
@@ -177,7 +180,16 @@ impl BuiltinWord {
 impl TreeHash for BuiltinWord {
     fn hash(&self, sha: &mut Sha3_256) {
         sha.update(unsafe { mem::transmute::<_, [u8; 8]>(mem::discriminant(self)) });
-        sha.update(unsafe { mem::transmute::<_, [u8; 3]>(*self) });
+        match self {
+            BuiltinWord::Call(a, b) | BuiltinWord::TupleGet(a, b) | BuiltinWord::TupleSet(a, b) => {
+                sha.update(&[*a]);
+                sha.update(&[*b]);
+            }
+            BuiltinWord::TupleCompose(size) | BuiltinWord::TupleDecompose(size) => {
+                sha.update(&[*size])
+            }
+            _ => {}
+        }
     }
 }
 

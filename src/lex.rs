@@ -29,6 +29,8 @@ pub enum TT {
     Colon,
     Equals,
     Type,
+    Data,
+    Unique,
     Use,
     DocComment(String),
     Comment(String),
@@ -97,6 +99,8 @@ impl fmt::Display for TT {
             TT::Colon => ":".fmt(f),
             TT::Equals => "=".fmt(f),
             TT::Type => "type".fmt(f),
+            TT::Data => "data".fmt(f),
+            TT::Unique => "unique".fmt(f),
             TT::Use => "use".fmt(f),
             TT::Period => ".".fmt(f),
             TT::WhiteSpace(s) => s.fmt(f),
@@ -374,7 +378,9 @@ where
                         "true" => TT::Bool(true),
                         "false" => TT::Bool(false),
                         "type" => TT::Type,
+                        "data" => TT::Data,
                         "use" => TT::Use,
+                        "unique" => TT::Unique,
                         "--" => TT::DoubleDash,
                         "---" => return Ok(None),
                         _ => TT::Ident(s),
@@ -428,5 +434,5 @@ fn escaped_char(c: char) -> Result<char, LexErrorKind> {
 }
 
 fn ident_char(c: char) -> bool {
-    c > ' ' && c as u32 != 127 && !"[]{}()".contains(c)
+    c > ' ' && c as u32 != 127 && !"=:[]{}()".contains(c)
 }
