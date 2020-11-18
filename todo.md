@@ -1,5 +1,4 @@
-- Use less unsafe in runtime
-- Dealias command
-- Purity in signatures
 - Registers
+- Purity in signatures
 - Lots more builtins
+- Dealias command

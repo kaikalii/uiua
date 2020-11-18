@@ -5,7 +5,7 @@ use sha3::*;
 
 use crate::{ast::*, runtime::*, types::*};
 
-pub static PRELUDE: &[&str] = &["stack", "list", "tuple", "control"];
+pub static PRELUDE: &[&str] = &["stack", "list", "tuple", "io", "control"];
 
 macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
@@ -66,6 +66,10 @@ builtin_words!(
     Pop,
     /// Pop a message and panic with it
     Panic,
+    /// Print a message to the standard output
+    Print,
+    /// Print a message to the standard output with a newline
+    Println,
 );
 
 fn generic_list() -> Type {
@@ -149,6 +153,7 @@ impl BuiltinWord {
             BuiltinWord::Swap => (vec![a(), b()], vec![b(), a()]),
             BuiltinWord::Pop => (vec![a()], vec![]),
             BuiltinWord::Panic => (vec![Primitive::Text.into()], vec![Primitive::Never.into()]),
+            BuiltinWord::Print | BuiltinWord::Println => (vec![Primitive::Text.into()], vec![]),
         };
         Signature::new(before, after)
     }
@@ -173,15 +178,17 @@ impl BuiltinWord {
             }
             BuiltinWord::TupleGet(_, n) => Ident::module("tuple".into(), format!("{}>>", n)),
             BuiltinWord::TupleSet(_, n) => Ident::module("tuple".into(), format!(">>{}", n)),
+            BuiltinWord::Print => Ident::module("io", "print"),
+            BuiltinWord::Println => Ident::module("io", "println"),
         }
     }
-    pub fn run_fn(&self) -> StackFn {
+    pub fn run_fn(&self, _sig: &Signature) -> StackFn {
         match self {
             BuiltinWord::Pop => Box::new(|stack| {
-                stack.pop().drop();
+                stack.pop();
             }),
             BuiltinWord::Dup => Box::new(|stack| {
-                let duped = stack.top().dup();
+                let duped = stack.top().clone();
                 stack.push(duped);
             }),
             BuiltinWord::Swap => Box::new(|stack| {
@@ -204,6 +211,8 @@ impl BuiltinWord {
                 let item = stack.pop();
                 stack.top().get_ptr_mut::<List>().push_front(item);
             }),
+            BuiltinWord::Print => Box::new(|stack| print!("{}", stack.pop().get_ptr::<Text>())),
+            BuiltinWord::Println => Box::new(|stack| println!("{}", stack.pop().get_ptr::<Text>())),
             _ => todo!("other builtin functions"),
         }
     }

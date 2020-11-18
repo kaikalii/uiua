@@ -86,9 +86,16 @@ impl Codebase {
                             }
                             cb.last_scratch_file = Some(path.clone());
                             match cb.handle_file_change(&path) {
-                                Ok(()) => {
-                                    if let Err(e) = cb.comp.as_ref().unwrap().print(&mut cb.defs) {
+                                Ok(watch_words) => {
+                                    let comp = cb.comp.as_ref().unwrap();
+                                    if let Err(e) = comp.print(&mut cb.defs) {
                                         println!("{}", e)
+                                    } else if comp.errors.is_empty() {
+                                        // Run watch words
+                                        for word in watch_words {
+                                            run(word, &cb.defs);
+                                        }
+                                        println!();
                                     }
                                 }
                                 Err(e) => println!("\n{} {}", e, diff.to_string_lossy()),
@@ -101,7 +108,7 @@ impl Codebase {
             .unwrap();
         Ok(cb)
     }
-    fn handle_file_change(&mut self, path: &Path) -> Result<(), CodebaseError> {
+    fn handle_file_change(&mut self, path: &Path) -> Result<Vec<Word>, CodebaseError> {
         self.defs.reset();
         let path = path.to_path_buf();
         let buffer = fs::read(&path)?;
@@ -116,7 +123,7 @@ impl Codebase {
             Err(e) => {
                 comp.errors.push(e.span.sp(CompileError::Parse(e.kind)));
                 self.comp = Some(comp);
-                return Ok(());
+                return Ok(Vec::new());
             }
         };
         let mut errors_len = 0;
@@ -142,9 +149,9 @@ impl Codebase {
             }
             errors_len = errors.len();
         }
+        let mut watch_words = Vec::new();
         // Insert properly resolved defs into the real defs
         if errors.is_empty() {
-            let mut watch_words = Vec::new();
             for item in unresolved_items {
                 watch_words.extend(
                     resolve_item(
@@ -158,16 +165,12 @@ impl Codebase {
                     .unwrap_or_else(|e| panic!("{}", e)),
                 );
             }
-            // Run watch words
-            for word in watch_words {
-                run(word, &self.defs);
-            }
         }
         comp.errors
             .extend(errors.into_iter().map(|e| e.map(Into::into)));
         if comp.errors.is_empty() {}
         self.comp = Some(comp);
-        Ok(())
+        Ok(watch_words)
     }
     pub fn print_path_prompt(&self) {
         print!(

@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 
-use std::{collections::VecDeque, convert::identity, fmt, mem::*, rc::Rc};
-
-use itertools::*;
+use std::{collections::VecDeque, convert::identity, mem::*, rc::Rc};
 
 use crate::{ast::*, codebase::*, types::*};
 
@@ -13,13 +11,13 @@ pub struct Stack {
     pub values: Vec<Value>,
     pub i: usize,
     pub ret: Vec<usize>,
+    pub strings: Vec<String>,
 }
 
 impl Stack {
     pub fn jump(&mut self, j: usize) {
         self.ret.push(self.i + 1);
         self.i = j;
-        println!("jump to {}", j);
     }
     pub fn push<V>(&mut self, val: V)
     where
@@ -30,8 +28,8 @@ impl Stack {
     pub fn pop(&mut self) -> Value {
         self.values.pop().expect("nothing to pop")
     }
-    pub fn top(&self) -> Value {
-        *self.values.last().expect("nothing on top")
+    pub fn top(&self) -> &Value {
+        self.values.last().expect("nothing on top")
     }
 }
 
@@ -48,6 +46,7 @@ pub fn run(word: Word, defs: &Defs) {
         panic!("somehow run builtin word")
     };
     nodes.retain(Node::does_something);
+    let mut stack = Stack::default();
     let mut instrs = Vec::new();
     let mut running_sig;
     let mut word_start = 0;
@@ -63,12 +62,13 @@ pub fn run(word: Word, defs: &Defs) {
                 Node::Ident(hash) => {
                     let entry = defs.words.entry_by_hash(&hash, Query::All).unwrap();
                     let word = entry.item;
-                    running_sig = running_sig.compose(&word.sig).unwrap();
                     match word.kind {
                         WordKind::Builtin(bi) => {
-                            instrs.push(Instruction::Execute(bi.run_fn()));
+                            instrs.push(Instruction::Execute(bi.run_fn(&running_sig)));
+                            running_sig = running_sig.compose(&word.sig).unwrap();
                         }
                         WordKind::Uiua(mut nodes) => {
+                            running_sig = running_sig.compose(&word.sig).unwrap();
                             nodes.retain(Node::does_something);
                             instrs.push(Instruction::Jump(next_word_start));
                             next_word_start += nodes.len() + 1;
@@ -85,8 +85,9 @@ pub fn run(word: Word, defs: &Defs) {
                         Literal::Float(f) => Box::new(move |stack| stack.push(f)),
                         Literal::Char(c) => Box::new(move |stack| stack.push(c)),
                         Literal::Text(s) => {
-                            let val = s.to_val();
-                            Box::new(move |stack| stack.push(val))
+                            let index = stack.strings.len();
+                            stack.strings.push(s);
+                            Box::new(move |stack| stack.push(stack.strings[index].clone().to_val()))
                         }
                     };
                     running_sig = running_sig
@@ -114,65 +115,60 @@ pub fn run(word: Word, defs: &Defs) {
         instrs.push(Instruction::Return);
         word_start += seq_len;
     }
-    let mut stack = Stack::default();
-    println!();
     while stack.i < instrs.len() {
-        print!("{}: ", stack.i);
         match &instrs[stack.i] {
             Instruction::Execute(f) => {
                 f(&mut stack);
-                for val in &stack.values {
-                    print!("{} ", (val.debug)(val.u));
-                }
-                println!();
                 stack.i += 1;
             }
             Instruction::Jump(j) => stack.jump(*j),
             Instruction::Return => {
                 if let Some(r) = stack.ret.pop() {
-                    println!("ret to {}", r);
                     stack.i = r;
                 } else {
-                    println!("ret to end");
                     break;
                 }
             }
         }
     }
-    println!();
-    for val in stack.values {
-        print!("{}", (val.debug)(val.u));
-        val.drop();
-        print!(" ");
+}
+
+pub struct Value {
+    u: u64,
+    clone: fn(u64) -> u64,
+    drop: fn(u64),
+}
+
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        Value {
+            u: (self.clone)(self.u),
+            clone: self.clone,
+            drop: self.drop,
+        }
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct Value {
-    u: u64,
-    dup: fn(u64) -> u64,
-    drop: fn(u64),
-    debug: fn(u64) -> String,
-    display: Option<fn(u64) -> String>,
+impl Drop for Value {
+    fn drop(&mut self) {
+        (self.drop)(self.u);
+    }
 }
 
 impl Value {
-    pub fn dup(self) -> Value {
-        Value {
-            u: (self.dup)(self.u),
-            ..self
-        }
-    }
-    pub fn drop(self) {
-        (self.drop)(self.u)
-    }
-    pub fn get<T>(self) -> T
+    pub fn get<T>(&self) -> T
     where
         T: StackVal,
     {
         T::from_u(self.u)
     }
-    pub fn get_ptr_mut<'a, T>(self) -> &'a mut T
+    pub fn get_ptr<'a, T>(&self) -> &'a T
+    where
+        T: HeapVal,
+    {
+        T::ptr_from_u(self.u)
+    }
+    pub fn get_ptr_mut<'a, T>(&self) -> &'a mut T
     where
         T: HeapVal,
     {
@@ -189,38 +185,28 @@ where
     }
 }
 
+pub type Text = String;
 pub type List = VecDeque<Value>;
 
-pub trait StackVal: Copy + fmt::Debug + fmt::Display {
+pub trait StackVal: Copy {
     fn from_u(u: u64) -> Self;
     fn to_u(self) -> u64;
-    fn debug(u: u64) -> String {
-        format!("{:?}", Self::from_u(u))
-    }
-    fn display(u: u64) -> String {
-        format!("{}", Self::from_u(u))
-    }
     fn to_val(self) -> Value {
         Value {
             u: self.to_u(),
-            dup: identity,
+            clone: identity,
             drop: no_drop,
-            debug: Self::debug,
-            display: Some(Self::display),
         }
     }
 }
 
 fn no_drop(_: u64) {}
 
-pub type Ptr<T> = Rc<ManuallyDrop<T>>;
+pub type Ptr<T> = Rc<T>;
 
 pub trait HeapVal: Clone {
-    fn drop_it(&self);
-    fn debug(&self) -> String;
-    fn display_u() -> Option<fn(u64) -> String>;
     fn drop(u: u64) {
-        Self::drop_it(&*unsafe { Box::from_raw(u as usize as *mut Ptr<Self>) });
+        unsafe { Box::from_raw(u as usize as *mut Ptr<Self>) };
     }
     fn ptr_from_u<'a>(u: u64) -> &'a mut Ptr<Self> {
         unsafe { &mut *(u as usize as *mut Ptr<Self>) }
@@ -229,12 +215,9 @@ pub trait HeapVal: Clone {
         Box::leak(Box::new(ptr)) as *mut Ptr<Self> as usize as u64
     }
     fn to_u(self) -> u64 {
-        Self::ptr_to_u(Ptr::new(ManuallyDrop::new(self)))
+        Self::ptr_to_u(Ptr::new(self))
     }
-    fn debug_u(u: u64) -> String {
-        Self::ptr_from_u(u).debug()
-    }
-    fn dup(u: u64) -> u64 {
+    fn clone_u(u: u64) -> u64 {
         let ptr = Self::ptr_from_u(u);
         let ptr_clone = Ptr::clone(ptr);
         Self::ptr_to_u(ptr_clone)
@@ -242,10 +225,8 @@ pub trait HeapVal: Clone {
     fn to_val(self) -> Value {
         Value {
             u: self.to_u(),
-            dup: Self::dup,
+            clone: Self::clone_u,
             drop: Self::drop,
-            debug: Self::debug_u,
-            display: Self::display_u(),
         }
     }
 }
@@ -309,40 +290,8 @@ impl StackVal for usize {
     fn to_u(self) -> u64 {
         self as u64
     }
-    fn debug(u: u64) -> String {
-        format!("jump({})", u)
-    }
-    fn display(u: u64) -> String {
-        format!("jump({})", u)
-    }
 }
 
-impl HeapVal for String {
-    fn drop_it(&self) {}
-    fn debug(&self) -> String {
-        format!("{:?}", self)
-    }
-    fn display_u() -> Option<fn(u64) -> String> {
-        Some(|u: u64| (***Self::ptr_from_u(u)).clone())
-    }
-}
+impl HeapVal for String {}
 
-impl HeapVal for List {
-    fn drop_it(&self) {
-        for val in self {
-            val.drop();
-        }
-    }
-    fn debug(&self) -> String {
-        format!(
-            "[{}]",
-            self.iter()
-                .map(|val| (val.debug)(val.u))
-                .intersperse(" ".into())
-                .collect::<String>()
-        )
-    }
-    fn display_u() -> Option<fn(u64) -> String> {
-        None
-    }
-}
+impl HeapVal for List {}
