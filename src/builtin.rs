@@ -5,11 +5,11 @@ use sha3::*;
 
 use crate::{ast::*, runtime::*, types::*};
 
-pub static PRELUDE: &[&str] = &["stack", "list", "tuple", "io", "control"];
+pub static PRELUDE: &[&str] = &["stack", "list", "tuple", "io", "control", "string"];
 
 macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
-        #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub enum BuiltinWord {
             $(
                 $(#[$doc])*
@@ -20,6 +20,7 @@ macro_rules! builtin_words {
             TupleDecompose(u8),
             TupleGet(u8, u8),
             TupleSet(u8, u8),
+            Format(Primitive),
         }
         impl BuiltinWord {
             pub const ALL_SIMPLE: &'static [BuiltinWord] = &[$(BuiltinWord::$name),*];
@@ -36,6 +37,7 @@ macro_rules! builtin_words {
                     BuiltinWord::TupleDecompose(size) => format!("Pop a {} and push the {} items in order", tuple(*size), size),
                     BuiltinWord::TupleGet(_, n) => format!("Get the {} item of a tuple", ordinal(*n)),
                     BuiltinWord::TupleSet(_, n) => format!("Set the {} item of a tuple", ordinal(*n)),
+                    BuiltinWord::Format(_) => format!("Pop an item and push it converted to text"),
                 }
             }
         }
@@ -101,10 +103,20 @@ impl BuiltinWord {
         let tuple_set = (2..=8)
             .map(|size| (0..size).map(move |n| BuiltinWord::TupleSet(size, n)))
             .flatten();
+        let format = vec![
+            Primitive::<Type>::Bool,
+            Primitive::Nat,
+            Primitive::Int,
+            Primitive::Float,
+            Primitive::Char,
+        ]
+        .into_iter()
+        .map(BuiltinWord::Format);
         call.chain(tuple_compose)
             .chain(tuple_decompose)
             .chain(tuple_get)
             .chain(tuple_set)
+            .chain(format)
     }
     pub fn sig(&self) -> Signature {
         let (before, after) = match self {
@@ -154,6 +166,7 @@ impl BuiltinWord {
             BuiltinWord::Pop => (vec![a()], vec![]),
             BuiltinWord::Panic => (vec![Primitive::Text.into()], vec![Primitive::Never.into()]),
             BuiltinWord::Print | BuiltinWord::Println => (vec![Primitive::Text.into()], vec![]),
+            BuiltinWord::Format(prim) => (vec![prim.clone().into()], vec![Primitive::Text.into()]),
         };
         Signature::new(before, after)
     }
@@ -180,6 +193,7 @@ impl BuiltinWord {
             BuiltinWord::TupleSet(_, n) => Ident::module("tuple".into(), format!(">>{}", n)),
             BuiltinWord::Print => Ident::module("io", "print"),
             BuiltinWord::Println => Ident::module("io", "println"),
+            BuiltinWord::Format(_) => Ident::module("string", "fmt"),
         }
     }
     pub fn run_fn(&self, _sig: &Signature) -> StackFn {
@@ -213,6 +227,29 @@ impl BuiltinWord {
             }),
             BuiltinWord::Print => Box::new(|stack| print!("{}", stack.pop().get_ptr::<Text>())),
             BuiltinWord::Println => Box::new(|stack| println!("{}", stack.pop().get_ptr::<Text>())),
+            BuiltinWord::Format(prim) => match prim {
+                Primitive::Bool => Box::new(|stack| {
+                    let s = stack.pop().get::<bool>().to_string();
+                    stack.push(s.to_val());
+                }),
+                Primitive::Nat => Box::new(|stack| {
+                    let s = stack.pop().get::<u64>().to_string();
+                    stack.push(s.to_val());
+                }),
+                Primitive::Int => Box::new(|stack| {
+                    let s = stack.pop().get::<i64>().to_string();
+                    stack.push(s.to_val());
+                }),
+                Primitive::Float => Box::new(|stack| {
+                    let s = stack.pop().get::<f64>().to_string();
+                    stack.push(s.to_val());
+                }),
+                Primitive::Char => Box::new(|stack| {
+                    let s = stack.pop().get::<char>().to_string();
+                    stack.push(s.to_val());
+                }),
+                _ => unimplemented!(),
+            },
             _ => todo!("other builtin functions"),
         }
     }

@@ -1,4 +1,5 @@
 - Registers
+- Rules and Follows
 - Purity in signatures
 - Lots more builtins
 - Dealias command
