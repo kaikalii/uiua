@@ -1,11 +1,13 @@
-use std::{collections::VecDeque, mem};
+use std::mem;
 
 use serde::*;
 use sha3::*;
 
 use crate::{ast::*, runtime::*, types::*};
 
-pub static PRELUDE: &[&str] = &["stack", "list", "tuple", "io", "control", "string"];
+pub static PRELUDE: &[&str] = &[
+    "stack", "list", "tuple", "io", "control", "string", "option",
+];
 
 macro_rules! builtin_words {
     ($($(#[$doc:meta])? $name:ident,)*) => {
@@ -72,6 +74,12 @@ builtin_words!(
     Print,
     /// Print a message to the standard output with a newline
     Println,
+    /// Unwrap an Option. Panics if the Option is empty
+    OptionUnwrap,
+    /// Check if an Option has a value
+    OptionIsSome,
+    /// Check if an Option is empty
+    OptionIsNone,
 );
 
 fn generic_list() -> Type {
@@ -167,6 +175,11 @@ impl BuiltinWord {
             BuiltinWord::Panic => (vec![Primitive::Text.into()], vec![]),
             BuiltinWord::Print | BuiltinWord::Println => (vec![Primitive::Text.into()], vec![]),
             BuiltinWord::Format(prim) => (vec![prim.clone().into()], vec![Primitive::Text.into()]),
+            BuiltinWord::OptionUnwrap => (vec![a().option()], vec![a()]),
+            BuiltinWord::OptionIsSome | BuiltinWord::OptionIsNone => (
+                vec![a().option()],
+                vec![a().option(), Primitive::Bool.into()],
+            ),
         };
         Signature::new(before, after)
     }
@@ -194,6 +207,9 @@ impl BuiltinWord {
             BuiltinWord::Print => Ident::module("io", "print"),
             BuiltinWord::Println => Ident::module("io", "println"),
             BuiltinWord::Format(_) => Ident::module("string", "fmt"),
+            BuiltinWord::OptionUnwrap => Ident::module("option", "unwrap"),
+            BuiltinWord::OptionIsSome => Ident::module("option", "is_some"),
+            BuiltinWord::OptionIsNone => Ident::module("option", "is_none"),
         }
     }
     pub fn run_fn(&self, _sig: &Signature) -> StackFn {
@@ -216,7 +232,7 @@ impl BuiltinWord {
                 stack.jump(j);
                 stack.i -= 1;
             }),
-            BuiltinWord::List => Box::new(|stack| stack.push(VecDeque::new().to_val())),
+            BuiltinWord::List => Box::new(|stack| stack.push(List::new().to_val())),
             BuiltinWord::ListPushBack => Box::new(|stack| {
                 let item = stack.pop();
                 stack.top_mut().get_ptr_mut::<List>().push_back(item);
@@ -224,6 +240,14 @@ impl BuiltinWord {
             BuiltinWord::ListPushFront => Box::new(|stack| {
                 let item = stack.pop();
                 stack.top_mut().get_ptr_mut::<List>().push_front(item);
+            }),
+            BuiltinWord::ListPopBack => Box::new(|stack| {
+                let item = stack.top_mut().get_ptr_mut::<List>().pop_back();
+                stack.push(item.to_val());
+            }),
+            BuiltinWord::ListPopFront => Box::new(|stack| {
+                let item = stack.top_mut().get_ptr_mut::<List>().pop_front();
+                stack.push(item.to_val());
             }),
             BuiltinWord::Print => Box::new(|stack| print!("{}", stack.pop().get_ptr::<Text>())),
             BuiltinWord::Println => Box::new(|stack| println!("{}", stack.pop().get_ptr::<Text>())),
@@ -259,6 +283,22 @@ impl BuiltinWord {
             BuiltinWord::Panic => Box::new(|stack| {
                 let message = stack.pop().unwrap::<Text>();
                 stack.panic = Some(message);
+            }),
+            BuiltinWord::OptionUnwrap => Box::new(|stack| {
+                let op = stack.pop().unwrap::<Option<Value>>();
+                if let Some(val) = op {
+                    stack.push(val);
+                } else {
+                    stack.panic = Some("Attempted to unwrap an empty Option".into());
+                }
+            }),
+            BuiltinWord::OptionIsSome => Box::new(|stack| {
+                let b = stack.top().get_ptr::<Option<Value>>().is_some();
+                stack.push(b);
+            }),
+            BuiltinWord::OptionIsNone => Box::new(|stack| {
+                let b = stack.top().get_ptr::<Option<Value>>().is_none();
+                stack.push(b);
             }),
             _ => todo!("other builtin functions"),
         }

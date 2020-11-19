@@ -111,7 +111,7 @@ pub fn run(word: Word, defs: &Defs) {
                     let node_sig = Signature::new(vec![], vec![Primitive::Quotation(sig).into()]);
                     running_sig = running_sig.compose(&node_sig).unwrap();
                     next_word_start += nodes.len() + 1;
-                    node_queue.push_back((running_sig.clone(), node_sig, nodes));
+                    node_queue.push_back((Signature::new(vec![], vec![]), node_sig, nodes));
                 }
                 Node::Unhashed(_) => {}
             }
@@ -126,6 +126,7 @@ pub fn run(word: Word, defs: &Defs) {
                 stack.i += 1;
                 if let Some(message) = stack.panic.take() {
                     println!("panicked: {}", message);
+                    break;
                 }
             }
             Instruction::Jump(j) => stack.jump(*j),
@@ -307,6 +308,4 @@ impl StackVal for usize {
     }
 }
 
-impl HeapVal for String {}
-
-impl HeapVal for List {}
+impl<T> HeapVal for T where T: Clone {}
