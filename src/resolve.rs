@@ -25,13 +25,13 @@ impl<'a> DefsIO<'a> {
 }
 
 pub fn resolve_item(
-    item: &UnresolvedItem,
+    item: &UnresItem,
     path: &Option<String>,
     mut defs: DefsIO,
 ) -> SpResult<Option<Word>, ResolutionError> {
     match &item {
         // Uses
-        UnresolvedItem::Use(module) => {
+        UnresItem::Use(module) => {
             let module_exists = defs
                 .read()
                 .words
@@ -54,7 +54,7 @@ pub fn resolve_item(
             }
         }
         // Words
-        UnresolvedItem::Word(uw) => {
+        UnresItem::Word(uw) => {
             let word = resolve_word(&uw, defs.read())?;
             let error_span = if let Some(unres_sig) = &uw.sig {
                 uw.purpose.span - unres_sig.span
@@ -76,7 +76,7 @@ pub fn resolve_item(
             Ok(res)
         }
         // Type aliases
-        UnresolvedItem::Type(ut) => {
+        UnresItem::Type(ut) => {
             // Resolve
             let (alias, words) = resolve_type_alias(ut, defs.read())?;
             // Insert alias
@@ -136,11 +136,11 @@ pub fn insert_type_alias(
 }
 
 pub fn resolve_type_alias(
-    alias: &Sp<UnresolvedTypeAlias>,
+    alias: &Sp<UnresTypeAlias>,
     defs: &Defs,
 ) -> SpResult<(TypeAlias, Vec<(String, Word)>), ResolutionError> {
     Ok(match &alias.kind.data {
-        UnresolvedTypeAliasKind::Enum(variants) => {
+        UnresTypeAliasKind::Enum(variants) => {
             let res_alias = TypeAlias {
                 name: alias.name.data.clone(),
                 params: Default::default(),
@@ -164,7 +164,7 @@ pub fn resolve_type_alias(
                 .collect();
             (res_alias, words)
         }
-        UnresolvedTypeAliasKind::Record { params, fields } => {
+        UnresTypeAliasKind::Record { params, fields } => {
             let fields: Vec<(String, Type)> = fields
                 .iter()
                 .map(|field| {
@@ -237,7 +237,7 @@ pub fn resolve_type_alias(
     })
 }
 
-pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
+pub fn resolve_word(word: &Sp<UnresWord>, defs: &Defs) -> SpResult<Word, ResolutionError> {
     let given_sig = if let Some(sig) = &word.sig {
         Some(resolve_sig(sig, defs, &word.params)?)
     } else {
@@ -253,9 +253,9 @@ pub fn resolve_word(word: &Sp<UnresolvedWord>, defs: &Defs) -> SpResult<Word, Re
 }
 
 pub fn resolve_sequence(
-    nodes: &[Sp<UnresolvedNode>],
+    nodes: &[Sp<UnresNode>],
     defs: &Defs,
-    purpose: &Sp<UnresolvedWordPurpose>,
+    purpose: &Sp<UnresWordPurpose>,
     given_sig: Option<&Sp<Signature>>,
 ) -> SpResult<(Vec<Sp<Node>>, Signature), ResolutionError> {
     let mut resolved_nodes = Vec::new();
@@ -277,7 +277,7 @@ pub fn resolve_sequence(
     }
     for (i, node) in nodes.iter().enumerate() {
         match &node.data {
-            UnresolvedNode::Ident(ident) => {
+            UnresNode::Ident(ident) => {
                 if let Some(name) = purpose.name().filter(|name| ident.single_and_eq(name)) {
                     // Self-identifier
                     let node_sig =
@@ -358,7 +358,7 @@ pub fn resolve_sequence(
                     resolved_nodes.push(hash.map(Node::Ident));
                 }
             }
-            UnresolvedNode::Literal(lit) => {
+            UnresNode::Literal(lit) => {
                 let node_sig = Signature::new(vec![], vec![lit.as_primitive().into()]);
                 #[allow(unreachable_code)]
                 {
@@ -366,7 +366,7 @@ pub fn resolve_sequence(
                 }
                 resolved_nodes.push(node.span.sp(Node::Literal(lit.clone())))
             }
-            UnresolvedNode::Quotation(sub_nodes) => {
+            UnresNode::Quotation(sub_nodes) => {
                 let (sub_nodes, sub_sig) = resolve_sequence(sub_nodes, defs, purpose, None)?;
                 let node_sig =
                     Signature::new(vec![], vec![Primitive::Quotation(sub_sig.clone()).into()]);
@@ -382,9 +382,7 @@ pub fn resolve_sequence(
                     nodes: sub_nodes.into_iter().map(|node| node.data).collect(),
                 }));
             }
-            UnresolvedNode::Unhashed(s) => {
-                resolved_nodes.push(node.span.sp(Node::Unhashed(s.clone())))
-            }
+            UnresNode::Unhashed(s) => resolved_nodes.push(node.span.sp(Node::Unhashed(s.clone()))),
         }
     }
     // Test the final signature against the given one
@@ -417,9 +415,9 @@ pub fn resolve_sequence(
 }
 
 pub fn resolve_sig(
-    sig: &Sp<UnresolvedSignature>,
+    sig: &Sp<UnresSignature>,
     defs: &Defs,
-    params: &Sp<UnresolvedParams>,
+    params: &Sp<UnresParams>,
 ) -> SpResult<Sp<Signature>, ResolutionError> {
     let mut resolved_before = Vec::new();
     let mut resolved_after = Vec::new();
@@ -435,11 +433,11 @@ pub fn resolve_sig(
 }
 
 pub fn resolve_type(
-    ty: &Sp<UnresolvedType>,
+    ty: &Sp<UnresType>,
     defs: &Defs,
-    params: &Sp<UnresolvedParams>,
+    params: &Sp<UnresParams>,
 ) -> SpResult<Type, ResolutionError> {
-    if let UnresolvedType::Ident { ident, .. } = &**ty {
+    if let UnresType::Ident { ident, .. } = &**ty {
         if let Some(i) = params.iter().position(|param| ident.single_and_eq(&param)) {
             Ok(Type::Generic(Generic::new(
                 ident.name.clone(),
@@ -455,15 +453,13 @@ pub fn resolve_type(
 }
 
 fn resolve_concrete_type(
-    ty: &Sp<UnresolvedType>,
+    ty: &Sp<UnresType>,
     defs: &Defs,
-    word_params: &Sp<UnresolvedParams>,
+    word_params: &Sp<UnresParams>,
 ) -> SpResult<Type, ResolutionError> {
     match &ty.data {
-        UnresolvedType::Prim(prim) => {
-            Ok(Type::Prim(resolve_prim(prim, defs, ty.span, word_params)?))
-        }
-        UnresolvedType::Ident {
+        UnresType::Prim(prim) => Ok(Type::Prim(resolve_prim(prim, defs, ty.span, word_params)?)),
+        UnresType::Ident {
             ident,
             params: type_params,
         } => {
@@ -498,10 +494,10 @@ fn resolve_concrete_type(
 }
 
 pub fn resolve_prim(
-    prim: &UnresolvedPrimitive,
+    prim: &UnresPrimitive,
     defs: &Defs,
     span: Span,
-    params: &Sp<UnresolvedParams>,
+    params: &Sp<UnresParams>,
 ) -> SpResult<Primitive, ResolutionError> {
     Ok(match prim {
         Primitive::Bool => Primitive::Bool,

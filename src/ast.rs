@@ -198,19 +198,19 @@ impl fmt::Display for Unhashed {
 }
 
 #[derive(Debug, Clone)]
-pub enum UnresolvedItem {
-    Word(Sp<UnresolvedWord>),
-    Type(Sp<UnresolvedTypeAlias>),
+pub enum UnresItem {
+    Word(Sp<UnresWord>),
+    Type(Sp<UnresTypeAlias>),
     Use(Sp<String>),
 }
 
 #[derive(Debug, Clone)]
-pub struct UnresolvedWord {
-    pub purpose: Sp<UnresolvedWordPurpose>,
+pub struct UnresWord {
+    pub purpose: Sp<UnresWordPurpose>,
     pub doc: String,
-    pub params: Sp<UnresolvedParams>,
-    pub sig: Option<Sp<UnresolvedSignature>>,
-    pub nodes: Vec<Sp<UnresolvedNode>>,
+    pub params: Sp<UnresParams>,
+    pub sig: Option<Sp<UnresSignature>>,
+    pub nodes: Vec<Sp<UnresNode>>,
 }
 
 #[derive(Debug, Clone)]
@@ -235,7 +235,7 @@ impl<T> WordPurpose<T> {
     }
 }
 
-pub type UnresolvedWordPurpose = WordPurpose<String>;
+pub type UnresWordPurpose = WordPurpose<String>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -321,9 +321,9 @@ impl TryFrom<String> for Ident {
 }
 
 #[derive(Debug, Clone)]
-pub enum UnresolvedNode {
+pub enum UnresNode {
     Ident(Ident),
-    Quotation(Vec<Sp<UnresolvedNode>>),
+    Quotation(Vec<Sp<UnresNode>>),
     Literal(Literal),
     Unhashed(Unhashed),
 }

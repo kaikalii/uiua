@@ -47,8 +47,8 @@ impl From<LexError> for ParseError {
 }
 
 enum SigOrList {
-    Sig(UnresolvedSignature),
-    List(Sp<UnresolvedType>),
+    Sig(UnresSignature),
+    List(Sp<UnresType>),
 }
 
 struct Parser<R>
@@ -146,22 +146,22 @@ where
         })
     }
     /// Try to match a type
-    fn try_ty(&mut self) -> Result<Option<Sp<UnresolvedType>>, ParseError> {
+    fn try_ty(&mut self) -> Result<Option<Sp<UnresType>>, ParseError> {
         let ty = if let Some(question_mark) = self.try_mat(TT::QuestionMark) {
             let inner = self.ty()?;
             Some(
                 Span::new(question_mark.span.start, inner.span.end)
-                    .sp(UnresolvedType::Prim(Primitive::Option(Box::new(inner)))),
+                    .sp(UnresType::Prim(Primitive::Option(Box::new(inner)))),
             )
         } else if let Some(ident) = self.ident()? {
             let ident_span = ident.span;
             let ty = match (&ident.module, ident.name.as_str()) {
-                (None, "Bool") => UnresolvedType::Prim(Primitive::Bool),
-                (None, "Nat") => UnresolvedType::Prim(Primitive::Nat),
-                (None, "Int") => UnresolvedType::Prim(Primitive::Int),
-                (None, "Float") => UnresolvedType::Prim(Primitive::Float),
-                (None, "Char") => UnresolvedType::Prim(Primitive::Char),
-                (None, "Text") => UnresolvedType::Prim(Primitive::Text),
+                (None, "Bool") => UnresType::Prim(Primitive::Bool),
+                (None, "Nat") => UnresType::Prim(Primitive::Nat),
+                (None, "Int") => UnresType::Prim(Primitive::Int),
+                (None, "Float") => UnresType::Prim(Primitive::Float),
+                (None, "Char") => UnresType::Prim(Primitive::Char),
+                (None, "Text") => UnresType::Prim(Primitive::Text),
                 _ => {
                     let mut params_start = ident.span.end;
                     let mut params_end = params_start;
@@ -174,7 +174,7 @@ where
                         }
                         params_end = self.mat("}", TT::CloseCurly)?.span.end;
                     }
-                    UnresolvedType::Ident {
+                    UnresType::Ident {
                         ident,
                         params: Span::new(params_start, params_end).sp(params),
                     }
@@ -186,7 +186,7 @@ where
             self.mat('\\', TT::Backslash)?;
             let err = self.ty()?;
             Some(
-                Span::new(backslash.span.start, err.span.end).sp(UnresolvedType::Prim(
+                Span::new(backslash.span.start, err.span.end).sp(UnresType::Prim(
                     Primitive::Result(Box::new(ok), Box::new(err)),
                 )),
             )
@@ -201,11 +201,11 @@ where
             if types.len() < 2 || types.len() > 8 {
                 return Err(ParseErrorKind::InvalidTupleSize(types.len()).span(span));
             }
-            Some(span.sp(UnresolvedType::Prim(Primitive::Tuple(types))))
+            Some(span.sp(UnresType::Prim(Primitive::Tuple(types))))
         } else if let Some(sig_or_list) = self.sig_or_list()? {
             Some(sig_or_list.map(|sol| match sol {
-                SigOrList::Sig(sig) => UnresolvedType::Prim(Primitive::Quotation(sig)),
-                SigOrList::List(inner) => UnresolvedType::Prim(Primitive::List(Box::new(inner))),
+                SigOrList::Sig(sig) => UnresType::Prim(Primitive::Quotation(sig)),
+                SigOrList::List(inner) => UnresType::Prim(Primitive::List(Box::new(inner))),
             }))
         } else {
             None
@@ -213,7 +213,7 @@ where
         Ok(ty)
     }
     /// Match a type
-    fn ty(&mut self) -> Result<Sp<UnresolvedType>, ParseError> {
+    fn ty(&mut self) -> Result<Sp<UnresType>, ParseError> {
         if let Some(ty) = self.try_ty()? {
             Ok(ty)
         } else {
@@ -221,7 +221,7 @@ where
         }
     }
     /// Match type parameter declaration
-    fn params(&mut self) -> Result<Sp<UnresolvedParams>, ParseError> {
+    fn params(&mut self) -> Result<Sp<UnresParams>, ParseError> {
         let mut start = self.loc;
         let mut end = start;
         // Match type params names
@@ -268,7 +268,7 @@ where
         })
     }
     /// Match a type signature
-    fn sig(&mut self) -> Result<Option<Sp<UnresolvedSignature>>, ParseError> {
+    fn sig(&mut self) -> Result<Option<Sp<UnresSignature>>, ParseError> {
         if let Some(sig_or_list) = self.sig_or_list()? {
             match sig_or_list.data {
                 SigOrList::Sig(sig) => Ok(Some(sig_or_list.span.sp(sig))),
@@ -283,19 +283,19 @@ where
         }
     }
     /// Match a sequence of words
-    fn seq(&mut self) -> Result<Vec<Sp<UnresolvedNode>>, ParseError> {
+    fn seq(&mut self) -> Result<Vec<Sp<UnresNode>>, ParseError> {
         let mut nodes = Vec::new();
         loop {
             if let Some(unhashes) = self.unhashed() {
-                nodes.push(unhashes.map(UnresolvedNode::Unhashed))
+                nodes.push(unhashes.map(UnresNode::Unhashed))
             } else if let Some(node) = self.try_mat(TT::node) {
                 nodes.push(node);
             } else if let Some(ident) = self.ident()? {
-                nodes.push(ident.map(UnresolvedNode::Ident));
+                nodes.push(ident.map(UnresNode::Ident));
             } else if self.try_mat(TT::OpenBracket).is_some() {
                 self.clear_whitespace();
                 while let Some(unhashed) = self.unhashed() {
-                    nodes.push(unhashed.map(UnresolvedNode::Unhashed))
+                    nodes.push(unhashed.map(UnresNode::Unhashed))
                 }
                 let sub_nodes = self.seq()?;
                 let span = sub_nodes
@@ -303,7 +303,7 @@ where
                     .zip(sub_nodes.last())
                     .map(|(a, b)| a.span - b.span)
                     .unwrap_or_else(|| Span::new(self.loc, self.loc));
-                nodes.push(span.sp(UnresolvedNode::Quotation(sub_nodes)));
+                nodes.push(span.sp(UnresNode::Quotation(sub_nodes)));
                 self.mat(']', TT::CloseBracket)?;
             } else {
                 break;
@@ -316,8 +316,8 @@ where
         &mut self,
         doc: String,
         colon: Sp<()>,
-        purpose: Sp<UnresolvedWordPurpose>,
-    ) -> Result<Sp<UnresolvedWord>, ParseError> {
+        purpose: Sp<UnresWordPurpose>,
+    ) -> Result<Sp<UnresWord>, ParseError> {
         let start = colon.span.start;
         let mut sig = None;
         let mut params = Span::new(start, start).sp(Vec::new());
@@ -335,7 +335,7 @@ where
         self.clear_whitespace();
         // Match the nodes
         let nodes = self.seq()?;
-        Ok(Span::new(start, self.loc).sp(UnresolvedWord {
+        Ok(Span::new(start, self.loc).sp(UnresWord {
             purpose,
             doc,
             params,
@@ -344,7 +344,7 @@ where
         }))
     }
     /// Match a data type alias
-    fn data(&mut self, data_token: Sp<()>) -> Result<Sp<UnresolvedTypeAlias>, ParseError> {
+    fn data(&mut self, data_token: Sp<()>) -> Result<Sp<UnresTypeAlias>, ParseError> {
         let start = data_token.span.start;
         // Match the name
         let name = self.mat("name", TT::ident)?;
@@ -365,20 +365,20 @@ where
         Ok(if is_record_type {
             // Record
             let first_ty = self.ty()?;
-            let mut fields = vec![(first.span - first_ty.span).sp(UnresolvedField {
+            let mut fields = vec![(first.span - first_ty.span).sp(UnresField {
                 name: first,
                 ty: first_ty,
             })];
             while let Some(name) = self.try_mat(TT::ident) {
                 self.mat(':', TT::Colon)?;
                 let ty = self.ty()?;
-                fields.push((name.span - ty.span).sp(UnresolvedField { name, ty }));
+                fields.push((name.span - ty.span).sp(UnresField { name, ty }));
             }
-            Span::new(start, self.loc).sp(UnresolvedTypeAlias {
+            Span::new(start, self.loc).sp(UnresTypeAlias {
                 name,
                 unique: true,
                 kind: Span::new(kind_start, self.loc)
-                    .sp(UnresolvedTypeAliasKind::Record { params, fields }),
+                    .sp(UnresTypeAliasKind::Record { params, fields }),
             })
         } else {
             // Enum
@@ -392,15 +392,15 @@ where
                     break;
                 }
             }
-            Span::new(start, self.loc).sp(UnresolvedTypeAlias {
+            Span::new(start, self.loc).sp(UnresTypeAlias {
                 name,
                 unique: true,
-                kind: Span::new(kind_start, self.loc).sp(UnresolvedTypeAliasKind::Enum(variants)),
+                kind: Span::new(kind_start, self.loc).sp(UnresTypeAliasKind::Enum(variants)),
             })
         })
     }
     /// Match an item
-    fn item(&mut self) -> Result<Option<UnresolvedItem>, ParseError> {
+    fn item(&mut self) -> Result<Option<UnresItem>, ParseError> {
         let mut doc = String::new();
         while let Some(comment) = self.try_mat(TT::doc_comment) {
             doc += &comment;
@@ -410,21 +410,21 @@ where
             return Ok(None);
         } else if let Some(colon) = self.try_mat(TT::Colon) {
             let purpose = self.mat("name", TT::ident)?.map(WordPurpose::Regular);
-            self.word(doc, colon, purpose).map(UnresolvedItem::Word)
+            self.word(doc, colon, purpose).map(UnresItem::Word)
         } else if let Some(colon) = self.try_mat(TT::TestColon) {
             let purpose = self.mat("name", TT::ident)?.map(WordPurpose::Test);
-            self.word(doc, colon, purpose).map(UnresolvedItem::Word)
+            self.word(doc, colon, purpose).map(UnresItem::Word)
         } else if let Some(colon) = self.try_mat(TT::WatchColon) {
             let purpose = colon.span.sp(WordPurpose::Watch);
-            self.word(doc, colon, purpose).map(UnresolvedItem::Word)
+            self.word(doc, colon, purpose).map(UnresItem::Word)
         } else if self.try_mat(TT::Use).is_some() {
             let module = self.mat("module name", TT::ident)?;
             if !doc.is_empty() {
                 return Err(ParseErrorKind::DocCommentOnUse.span(module.span));
             }
-            Ok(UnresolvedItem::Use(module))
+            Ok(UnresItem::Use(module))
         } else if let Some(data_token) = self.try_mat(TT::Data) {
-            self.data(data_token).map(UnresolvedItem::Type)
+            self.data(data_token).map(UnresItem::Type)
         } else if let Some(token) = self.next_token().transpose()? {
             Err(ParseErrorKind::ExpectedFoundTT {
                 expected: "':', 'type', 'use', or comment".into(),
@@ -449,7 +449,7 @@ where
     }
 }
 
-pub fn parse<R>(input: R) -> Result<Vec<UnresolvedItem>, ParseError>
+pub fn parse<R>(input: R) -> Result<Vec<UnresItem>, ParseError>
 where
     R: Read,
 {

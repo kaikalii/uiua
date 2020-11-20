@@ -333,7 +333,7 @@ pub enum Primitive<T = Type> {
     Result(Box<T>, Box<T>),
 }
 
-pub type UnresolvedPrimitive = Primitive<Sp<UnresolvedType>>;
+pub type UnresPrimitive = Primitive<Sp<UnresType>>;
 
 impl Primitive {
     #[allow(dead_code)]
@@ -409,33 +409,33 @@ impl fmt::Display for Primitive {
 }
 
 #[derive(Debug, Clone)]
-pub struct UnresolvedTypeAlias {
+pub struct UnresTypeAlias {
     pub name: Sp<String>,
     pub unique: bool,
-    pub kind: Sp<UnresolvedTypeAliasKind>,
+    pub kind: Sp<UnresTypeAliasKind>,
 }
 
 #[derive(Debug, Clone)]
-pub enum UnresolvedTypeAliasKind {
+pub enum UnresTypeAliasKind {
     Enum(Vec<Sp<String>>),
     Record {
-        params: Sp<UnresolvedParams>,
-        fields: Vec<Sp<UnresolvedField>>,
+        params: Sp<UnresParams>,
+        fields: Vec<Sp<UnresField>>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub struct UnresolvedField {
+pub struct UnresField {
     pub name: Sp<String>,
-    pub ty: Sp<UnresolvedType>,
+    pub ty: Sp<UnresType>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UnresolvedType {
-    Prim(UnresolvedPrimitive),
+pub enum UnresType {
+    Prim(UnresPrimitive),
     Ident {
         ident: Sp<Ident>,
-        params: Sp<Vec<Sp<UnresolvedType>>>,
+        params: Sp<Vec<Sp<UnresType>>>,
     },
 }
 
@@ -445,11 +445,11 @@ pub struct Signature<T = Type> {
     pub after: Vec<T>,
 }
 
-pub type UnresolvedParams = Vec<Sp<String>>;
-pub type UnresolvedSignature = Signature<Sp<UnresolvedType>>;
+pub type UnresParams = Vec<Sp<String>>;
+pub type UnresSignature = Signature<Sp<UnresType>>;
 
-impl UnresolvedSignature {
-    pub fn new_unresolved(before: Vec<Sp<UnresolvedType>>, after: Vec<Sp<UnresolvedType>>) -> Self {
+impl UnresSignature {
+    pub fn new_unresolved(before: Vec<Sp<UnresType>>, after: Vec<Sp<UnresType>>) -> Self {
         Signature { before, after }
     }
 }

@@ -49,14 +49,14 @@ impl TT {
             None
         }
     }
-    pub fn node(self) -> Option<UnresolvedNode> {
+    pub fn node(self) -> Option<UnresNode> {
         Some(match self {
-            TT::Text(s) => UnresolvedNode::Literal(Literal::Text(s)),
-            TT::Bool(b) => UnresolvedNode::Literal(Literal::Bool(b)),
-            TT::Nat(n) => UnresolvedNode::Literal(Literal::Nat(n)),
-            TT::Int(n) => UnresolvedNode::Literal(Literal::Int(n)),
-            TT::Float(n) => UnresolvedNode::Literal(Literal::Float(n)),
-            TT::Char(c) => UnresolvedNode::Literal(Literal::Char(c)),
+            TT::Text(s) => UnresNode::Literal(Literal::Text(s)),
+            TT::Bool(b) => UnresNode::Literal(Literal::Bool(b)),
+            TT::Nat(n) => UnresNode::Literal(Literal::Nat(n)),
+            TT::Int(n) => UnresNode::Literal(Literal::Int(n)),
+            TT::Float(n) => UnresNode::Literal(Literal::Float(n)),
+            TT::Char(c) => UnresNode::Literal(Literal::Char(c)),
             _ => return None,
         })
     }
