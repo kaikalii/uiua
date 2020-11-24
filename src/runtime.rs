@@ -113,7 +113,7 @@ pub fn run(word: Word, defs: &Defs) {
                     next_word_start += nodes.len() + 1;
                     node_queue.push_back((Signature::new(vec![], vec![]), node_sig, nodes));
                 }
-                Node::Unhashed(_) => {}
+                Node::TypeHint(_) | Node::Unhashed(_) => {}
             }
         }
         instrs.push(Instruction::Return);

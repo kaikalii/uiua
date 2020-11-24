@@ -1,6 +1,7 @@
 use std::{convert::*, fmt, mem, str::FromStr};
 
 use colored::*;
+use itertools::*;
 use serde::*;
 use sha3::*;
 
@@ -130,6 +131,7 @@ pub enum Node {
     SelfIdent,
     Quotation { sig: Signature, nodes: Vec<Node> },
     Literal(Literal),
+    TypeHint(Vec<Type>),
     Unhashed(Unhashed),
 }
 
@@ -157,6 +159,14 @@ impl Node {
                     format!("[ {} ]", Node::format(nodes, word_name, words))
                 }
                 Node::Literal(lit) => lit.to_string(),
+                Node::TypeHint(types) => format!(
+                    "({})",
+                    types
+                        .iter()
+                        .map(ToString::to_string)
+                        .intersperse(" ".into())
+                        .collect::<String>()
+                ),
                 Node::Unhashed(unhashed) => unhashed.to_string(),
             })
             .collect::<String>()
@@ -177,6 +187,11 @@ impl TreeHash for Node {
                 }
             }
             Node::Literal(lit) => lit.hash(sha),
+            Node::TypeHint(types) => {
+                for ty in types {
+                    ty.hash(sha);
+                }
+            }
             Node::SelfIdent | Node::Unhashed(_) => {}
         }
     }
@@ -325,6 +340,7 @@ pub enum UnresNode {
     Ident(Ident),
     Quotation(Vec<Sp<UnresNode>>),
     Literal(Literal),
+    TypeHint(Vec<Sp<UnresType>>),
     Unhashed(Unhashed),
 }
 

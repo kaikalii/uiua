@@ -244,7 +244,7 @@ pub fn resolve_word(word: &Sp<UnresWord>, defs: &Defs) -> SpResult<Word, Resolut
         None
     };
     let given_sig = given_sig.as_ref();
-    let (nodes, sig) = resolve_sequence(&word.nodes, defs, &word.purpose, given_sig)?;
+    let (nodes, sig) = resolve_sequence(&word.nodes, defs, &word.purpose, given_sig, &word.params)?;
     Ok(Word {
         doc: word.doc.clone(),
         sig,
@@ -257,6 +257,7 @@ pub fn resolve_sequence(
     defs: &Defs,
     purpose: &Sp<UnresWordPurpose>,
     given_sig: Option<&Sp<Signature>>,
+    type_params: &Sp<UnresParams>,
 ) -> SpResult<(Vec<Sp<Node>>, Signature), ResolutionError> {
     let mut resolved_nodes = Vec::new();
     // let mut sig: Option<Sp<Signature>> = None;
@@ -264,15 +265,20 @@ pub fn resolve_sequence(
         given_sig.map(|sig| sig.clone().map(|sig| sig.imagine_input_sig()));
     let mut final_prepend = sig.clone().map(|sig| sig.data.after).unwrap_or_default();
     macro_rules! compose {
-        ($next:expr, $name:expr) => {{
+        ($next:expr) => {{
             let next = $next;
-            sig = Some(if let Some(sig) = sig {
-                next.span.sp(sig
-                    .compose(&next.data)
-                    .map_err(|e| next.span.sp(e.name($name)))?)
+            if let Some(curr_sig) = &sig {
+                match curr_sig.compose(&next.data) {
+                    Ok(composed) => {
+                        sig = Some(next.span.sp(composed));
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
             } else {
-                next
-            });
+                sig = Some(next);
+                Ok(())
+            }
         }};
     }
     for (i, node) in nodes.iter().enumerate() {
@@ -286,7 +292,7 @@ pub fn resolve_sequence(
                                 Ident::no_module(name.clone()),
                             ))
                         })?;
-                    compose!(node_sig, ident.to_string());
+                    compose!(node_sig).map_err(|e| node.span.sp(e.with_ident(ident.clone())))?;
                     resolved_nodes.push(node.span.sp(Node::SelfIdent));
                 } else {
                     // General word lookup
@@ -354,33 +360,34 @@ pub fn resolve_sequence(
                         .entry_by_hash(&hash, Query::All)
                         .expect("word that was already found isn't present")
                         .item;
-                    compose!(node.span.sp(word.sig.clone()), ident.to_string());
+                    compose!(node.span.sp(word.sig.clone()))
+                        .map_err(|e| node.span.sp(e.with_ident(ident.clone())))?;
                     resolved_nodes.push(hash.map(Node::Ident));
                 }
             }
             UnresNode::Literal(lit) => {
                 let node_sig = Signature::new(vec![], vec![lit.as_primitive().into()]);
-                #[allow(unreachable_code)]
-                {
-                    compose!(node.span.sp(node_sig), panic!("literal composition failed"));
-                }
+                compose!(node.span.sp(node_sig)).expect("literal composition failed");
                 resolved_nodes.push(node.span.sp(Node::Literal(lit.clone())))
             }
             UnresNode::Quotation(sub_nodes) => {
-                let (sub_nodes, sub_sig) = resolve_sequence(sub_nodes, defs, purpose, None)?;
+                let (sub_nodes, sub_sig) =
+                    resolve_sequence(sub_nodes, defs, purpose, None, type_params)?;
                 let node_sig =
                     Signature::new(vec![], vec![Primitive::Quotation(sub_sig.clone()).into()]);
-                #[allow(unreachable_code)]
-                {
-                    compose!(
-                        node.span.sp(node_sig),
-                        panic!("quotation composition failed")
-                    );
-                }
+                compose!(node.span.sp(node_sig)).expect("quotation composition failed");
                 resolved_nodes.push(node.span.sp(Node::Quotation {
                     sig: sub_sig,
                     nodes: sub_nodes.into_iter().map(|node| node.data).collect(),
                 }));
+            }
+            UnresNode::TypeHint(types) => {
+                let types = types
+                    .iter()
+                    .map(|ty| resolve_type(ty, defs, type_params))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let node_sig = Signature::new(types.clone(), types.clone());
+                compose!(node.span.sp(node_sig)).map_err(|e| node.span.sp(e.with_hint(types)))?;
             }
             UnresNode::Unhashed(s) => resolved_nodes.push(node.span.sp(Node::Unhashed(s.clone()))),
         }
@@ -435,20 +442,23 @@ pub fn resolve_sig(
 pub fn resolve_type(
     ty: &Sp<UnresType>,
     defs: &Defs,
-    params: &Sp<UnresParams>,
+    type_params: &Sp<UnresParams>,
 ) -> SpResult<Type, ResolutionError> {
     if let UnresType::Ident { ident, .. } = &**ty {
-        if let Some(i) = params.iter().position(|param| ident.single_and_eq(&param)) {
+        if let Some(i) = type_params
+            .iter()
+            .position(|param| ident.single_and_eq(&param))
+        {
             Ok(Type::Generic(Generic::new(
                 ident.name.clone(),
                 i as u8,
                 false,
             )))
         } else {
-            resolve_concrete_type(ty, defs, params)
+            resolve_concrete_type(ty, defs, type_params)
         }
     } else {
-        resolve_concrete_type(ty, defs, params)
+        resolve_concrete_type(ty, defs, type_params)
     }
 }
 
@@ -532,11 +542,17 @@ pub enum ResolutionError {
         format_state(&output.before),
         format_state(&input.after)
     )]
-    TypeMismatch {
+    TypeMismatchWord {
         ident: Ident,
         output: Signature,
         input: Signature,
     },
+    #[error(
+        "Type hint ({}) does not match before state ( {} )",
+        format_state(types),
+        format_state(&input.after),
+    )]
+    TypeMismatchHint { types: Vec<Type>, input: Signature },
     #[error("Unknown word \"{0}\"")]
     UnknownWord(Ident),
     #[error("Unknown type \"{0}\"")]

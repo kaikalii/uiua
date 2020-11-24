@@ -846,11 +846,17 @@ pub struct SignatureError {
 }
 
 impl SignatureError {
-    pub fn name(self, name: String) -> ResolutionError {
-        ResolutionError::TypeMismatch {
-            ident: Ident::no_module(name),
+    pub fn with_ident(self, ident: Ident) -> ResolutionError {
+        ResolutionError::TypeMismatchWord {
+            ident,
             input: self.input,
             output: self.output,
+        }
+    }
+    pub fn with_hint(self, types: Vec<Type>) -> ResolutionError {
+        ResolutionError::TypeMismatchHint {
+            types,
+            input: self.input,
         }
     }
 }

@@ -288,6 +288,14 @@ where
         loop {
             if let Some(unhashes) = self.unhashed() {
                 nodes.push(unhashes.map(UnresNode::Unhashed))
+            } else if let Some(open_paren) = self.try_mat(TT::OpenParen) {
+                let start = open_paren.span.start;
+                let mut types = Vec::new();
+                while let Some(ty) = self.try_ty()? {
+                    types.push(ty);
+                }
+                let end = self.mat(')', TT::CloseParen)?.span.end;
+                nodes.push(Span::new(start, end).sp(UnresNode::TypeHint(types)));
             } else if let Some(node) = self.try_mat(TT::node) {
                 nodes.push(node);
             } else if let Some(ident) = self.ident()? {
