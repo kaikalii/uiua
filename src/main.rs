@@ -55,7 +55,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     cb.lock().unwrap().print_path_prompt();
     let mut last_command = String::new();
     // Command loop
-    loop {
+    'command_loop: loop {
         for mut line in input_recv.try_iter() {
             let mut cb = cb.lock().unwrap();
             if line.trim().is_empty() {
@@ -78,7 +78,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     }
                     Command::Ls { path } => cb.ls(path, ItemQuery::All),
                     Command::Cd { path } => cb.cd(&path),
-                    Command::Exit => break,
+                    Command::Exit => break 'command_loop,
                 },
                 Err(e) => println!("{}", e),
             }
