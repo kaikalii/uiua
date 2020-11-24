@@ -21,7 +21,7 @@ use std::{
 
 use structopt::StructOpt;
 
-use crate::{ast::*, codebase::*, command::*};
+use crate::{ast::*, codebase::*};
 
 #[derive(StructOpt)]
 struct App {
@@ -76,7 +76,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                             println!("\n{}", e);
                         }
                     }
-                    Command::Ls { path } => cb.ls(path, ItemQuery::All),
+                    Command::Ls { path } => cb.ls(path, ItemQuery::all()),
                     Command::Cd { path } => cb.cd(&path),
                     Command::Exit => break 'command_loop,
                 },

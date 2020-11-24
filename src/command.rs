@@ -11,18 +11,6 @@ use colored::*;
 
 use crate::{ast::*, codebase::*};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ItemQuery {
-    All,
-    Words,
-}
-
-impl ItemQuery {
-    pub fn words(&self) -> bool {
-        matches!(self, ItemQuery::All | ItemQuery::Words)
-    }
-}
-
 impl Codebase {
     pub fn add(&mut self) {
         println!();
@@ -36,7 +24,7 @@ impl Codebase {
                 for (hash, entry) in &self.defs.words.entries {
                     // Handle if there is an existing word in the codebase with the same name and signature
                     let old_to_delete = if let Some(old_hash) =
-                        self.defs.words.joint_entry(hash, entry, Query::Saved)
+                        self.defs.words.joint_entry(hash, entry, StateQuery::SAVED)
                     {
                         hashes_to_purge.push(old_hash);
                         if self.defs.words.hash_is_referenced(&old_hash) {
@@ -178,7 +166,7 @@ impl Codebase {
         };
         let mut track_i = 1;
         // Modules
-        if iom.show_modules() && query == ItemQuery::All {
+        if iom.show_modules() && query.is_all() {
             println!("{}", "Modules".bright_white().bold());
             let mut set = BTreeSet::new();
             for ident in self.defs.words.names.0.keys() {
@@ -192,7 +180,7 @@ impl Codebase {
             }
         }
         // Words
-        if query.words() {
+        if query.contains(ItemQuery::WORD) {
             let mut word_data: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
             match iom {
                 IdentOrModule::Module(path) => {
@@ -202,7 +190,7 @@ impl Codebase {
                                 let entry = self
                                     .defs
                                     .words
-                                    .entry_by_hash(hash, Query::Saved)
+                                    .entry_by_hash(hash, StateQuery::SAVED)
                                     .expect("name refers to invalid hash");
                                 word_data
                                     .entry((ident.clone(), entry.item.doc.clone()))
@@ -213,7 +201,7 @@ impl Codebase {
                     }
                 }
                 IdentOrModule::Ident(ident) => {
-                    for (_, entry) in self.defs.words.entries_by_ident(&ident, Query::Saved) {
+                    for (_, entry) in self.defs.words.entries_by_ident(&ident, StateQuery::SAVED) {
                         word_data
                             .entry((ident.clone(), entry.item.doc.clone()))
                             .or_default()
@@ -291,13 +279,13 @@ impl Codebase {
             let word_entries: Vec<_> = self
                 .defs
                 .words
-                .entries_by_ident(&ident, Query::Saved)
+                .entries_by_ident(&ident, StateQuery::SAVED)
                 .collect();
             let index = if let Some(index) = index {
                 index.saturating_sub(1)
             } else if word_entries.len() > 1 {
                 println!("\nMultiple applicable words. Please choose one:");
-                self.ls(Some(ident.to_string()), ItemQuery::Words);
+                self.ls(Some(ident.to_string()), ItemQuery::WORD);
                 return Ok(());
             } else {
                 0

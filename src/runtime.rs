@@ -64,7 +64,7 @@ pub fn run(word: Word, defs: &Defs) {
         for node in seq {
             match node {
                 Node::Ident(hash) => {
-                    let entry = defs.words.entry_by_hash(&hash, Query::All).unwrap();
+                    let entry = defs.words.entry_by_hash(&hash, StateQuery::all()).unwrap();
                     let word = entry.item;
                     match word.kind {
                         WordKind::Builtin(bi) => {

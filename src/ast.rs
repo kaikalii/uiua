@@ -151,7 +151,7 @@ impl Node {
             .iter()
             .map(|node| match node {
                 Node::Ident(hash) => words
-                    .entry_by_hash(hash, Query::All)
+                    .entry_by_hash(hash, StateQuery::all())
                     .and_then(|entry| entry.names.iter().next().map(ToString::to_string))
                     .unwrap_or_else(|| hash.to_string()[0..8].into()),
                 Node::SelfIdent => word_name.into(),

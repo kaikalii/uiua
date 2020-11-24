@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use bitflags::bitflags;
 use colored::*;
 use itertools::*;
 use notify::{self, watcher, DebouncedEvent, RecursiveMode, Watcher};
@@ -326,7 +327,7 @@ impl CodebaseItem for Word {
         if let WordKind::Uiua(nodes) = &self.kind {
             if nodes.len() == 1 {
                 if let Node::Ident(hash) = nodes.first().unwrap() {
-                    if let Some(entry) = items.entry_by_hash(hash, Query::All) {
+                    if let Some(entry) = items.entry_by_hash(hash, StateQuery::all()) {
                         if entry.item.sig == self.sig {
                             return *hash;
                         }
@@ -363,20 +364,24 @@ impl Default for ItemSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Query {
-    All,
-    Saved,
-    Pending,
+bitflags! {
+    pub struct StateQuery: u8 {
+        const SAVED = 0b01;
+        const PENDING = 0b10;
+    }
 }
 
-impl Query {
-    pub fn saved(&self) -> bool {
-        self != &Query::Pending
+bitflags! {
+    pub struct ItemQuery: u8 {
+        const WORD = 0b01;
+        const TYPE = 0b10;
     }
-    pub fn pending(&self) -> bool {
-        self != &Query::Saved
-    }
+}
+
+#[derive(Debug, Clone)]
+pub enum AnyItemEntry {
+    Word(ItemEntry<Word>),
+    Type(ItemEntry<TypeAlias>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -496,7 +501,7 @@ where
     /// Get all hashes that match the ident.
     /// If ident has module, then O(1).
     /// Otherwise, O(uses).
-    pub fn hashes_by_ident(&self, ident: &Ident, query: Query) -> Vec<Hash> {
+    pub fn hashes_by_ident(&self, ident: &Ident, query: StateQuery) -> Vec<Hash> {
         let mut ident_hashes = Vec::new();
         for ident in once(ident.clone()).chain(
             if ident.module.is_some() {
@@ -506,12 +511,12 @@ where
             }
             .map(move |module| Ident::module(&module, &ident.name)),
         ) {
-            if query.pending() {
+            if query.contains(StateQuery::PENDING) {
                 if let Some(hashes) = self.hashes.get(&ident) {
                     ident_hashes.extend(hashes.clone());
                 }
             }
-            if query.saved() {
+            if query.contains(StateQuery::SAVED) {
                 if let Some(hashes) = self.names.0.get(&ident) {
                     ident_hashes.extend(hashes.clone());
                 }
@@ -525,21 +530,21 @@ where
     pub fn entries_by_ident(
         &self,
         ident: &Ident,
-        query: Query,
+        query: StateQuery,
     ) -> impl Iterator<Item = (Hash, ItemEntry<T>)> + '_ {
         self.hashes_by_ident(ident, query)
             .into_iter()
             .filter_map(move |hash| self.entry_by_hash(&hash, query).map(|item| (hash, item)))
     }
     /// Get the entry associated with a hash. O(1)
-    pub fn entry_by_hash(&self, hash: &Hash, query: Query) -> Option<ItemEntry<T>> {
-        if query.pending() {
+    pub fn entry_by_hash(&self, hash: &Hash, query: StateQuery) -> Option<ItemEntry<T>> {
+        if query.contains(StateQuery::PENDING) {
             self.entries.get(hash).cloned()
         } else {
             None
         }
         .or_else(|| {
-            if query.saved() {
+            if query.contains(StateQuery::SAVED) {
                 ItemEntry::<T>::load(hash, &self.top_dir).ok()
             } else {
                 None
@@ -567,7 +572,7 @@ where
         &'a self,
         ident: &Ident,
         joinable: &'a T::Joinable,
-        query: Query,
+        query: StateQuery,
     ) -> impl Iterator<Item = Hash> + 'a {
         self.entries_by_ident(ident, query)
             .filter(move |(_, entry)| entry.item.joinable().is_joint_with(joinable))
@@ -576,7 +581,12 @@ where
     /// Get a hash that is joint with the given entry.
     /// If ident has module, then O(names).
     /// Otherwise, O(uses * names).
-    pub fn joint_entry(&self, hash: &Hash, entry: &ItemEntry<T>, query: Query) -> Option<Hash> {
+    pub fn joint_entry(
+        &self,
+        hash: &Hash,
+        entry: &ItemEntry<T>,
+        query: StateQuery,
+    ) -> Option<Hash> {
         entry.names.iter().find_map(|ident| {
             self.joint_ident(ident, entry.item.joinable(), query)
                 .find(|h| h != hash)
@@ -589,7 +599,7 @@ impl ItemDefs<Word> {
         &self,
         ident: &Ident,
         sig: &Signature,
-        query: Query,
+        query: StateQuery,
     ) -> Vec<(Hash, Word)> {
         self.entries_by_ident(ident, query)
             .filter(move |(_, entry)| sig.compose(&entry.item.sig).is_ok())
@@ -630,19 +640,24 @@ impl Compilation {
             // Words
             let mut word_data = Vec::new();
             for (hash, entry) in &defs.words.entries {
-                let message = if let Some(cb_entry) = defs.words.entry_by_hash(hash, Query::Saved) {
-                    if entry.names.intersection(&cb_entry.names).count() == 0 {
-                        format!("as alias for {}", cb_entry.format_names())
-                    } else if entry.names.len() > cb_entry.names.len() {
-                        "with new alias".into()
+                let message =
+                    if let Some(cb_entry) = defs.words.entry_by_hash(hash, StateQuery::SAVED) {
+                        if entry.names.intersection(&cb_entry.names).count() == 0 {
+                            format!("as alias for {}", cb_entry.format_names())
+                        } else if entry.names.len() > cb_entry.names.len() {
+                            "with new alias".into()
+                        } else {
+                            "no change".bright_black().to_string()
+                        }
+                    } else if defs
+                        .words
+                        .joint_entry(hash, entry, StateQuery::SAVED)
+                        .is_some()
+                    {
+                        "and ready to be updated".into()
                     } else {
-                        "no change".bright_black().to_string()
-                    }
-                } else if defs.words.joint_entry(hash, entry, Query::Saved).is_some() {
-                    "and ready to be updated".into()
-                } else {
-                    "and ready to be added".into()
-                };
+                        "and ready to be added".into()
+                    };
                 word_data.push((entry.format_names(), entry.item.sig.to_string(), message));
             }
             word_data.sort();
@@ -652,19 +667,24 @@ impl Compilation {
             // Type aliases
             let mut type_data = Vec::new();
             for (hash, entry) in &defs.types.entries {
-                let message = if let Some(cb_entry) = defs.types.entry_by_hash(hash, Query::Saved) {
-                    if entry.names.intersection(&cb_entry.names).count() == 0 {
-                        format!("as alias for {}", cb_entry.format_names())
-                    } else if entry.names.len() > cb_entry.names.len() {
-                        "with new alias".into()
+                let message =
+                    if let Some(cb_entry) = defs.types.entry_by_hash(hash, StateQuery::SAVED) {
+                        if entry.names.intersection(&cb_entry.names).count() == 0 {
+                            format!("as alias for {}", cb_entry.format_names())
+                        } else if entry.names.len() > cb_entry.names.len() {
+                            "with new alias".into()
+                        } else {
+                            "no change".bright_black().to_string()
+                        }
+                    } else if defs
+                        .types
+                        .joint_entry(hash, entry, StateQuery::SAVED)
+                        .is_some()
+                    {
+                        "and ready to be updated".into()
                     } else {
-                        "no change".bright_black().to_string()
-                    }
-                } else if defs.types.joint_entry(hash, entry, Query::Saved).is_some() {
-                    "and ready to be updated".into()
-                } else {
-                    "and ready to be added".into()
-                };
+                        "and ready to be added".into()
+                    };
                 type_data.push((entry.format_names(), message));
             }
             type_data.sort();

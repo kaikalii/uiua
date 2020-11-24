@@ -103,7 +103,7 @@ pub fn insert_word(
     if defs
         .read()
         .words
-        .joint_ident(&ident, &word.sig, Query::Pending)
+        .joint_ident(&ident, &word.sig, StateQuery::PENDING)
         .any(|h| h != hash)
     {
         return Err(error_span.sp(ResolutionError::NameAndSignatureExist {
@@ -126,7 +126,7 @@ pub fn insert_type_alias(
     if defs
         .read()
         .types
-        .joint_ident(&ident, &alias.params, Query::Pending)
+        .joint_ident(&ident, &alias.params, StateQuery::PENDING)
         .any(|h| h != hash)
     {
         return Err(error_span.sp(ResolutionError::AliasNameExists(ident)));
@@ -304,18 +304,24 @@ pub fn resolve_sequence(
                     let hash = if let Some(sig) = &sig_for_lookup {
                         // Use the signature to find a matching word
                         let mut matching_words =
-                            defs.words.by_ident_matching_sig(ident, &sig, Query::All);
+                            defs.words
+                                .by_ident_matching_sig(ident, &sig, StateQuery::all());
                         // Try to use only pending if there are too many words
                         if matching_words.len() > 1 {
                             let only_pending =
                                 defs.words
-                                    .by_ident_matching_sig(ident, &sig, Query::Pending);
+                                    .by_ident_matching_sig(ident, &sig, StateQuery::PENDING);
                             if !only_pending.is_empty() {
                                 matching_words = only_pending;
                             }
                         }
                         if matching_words.is_empty() {
-                            return if defs.words.entries_by_ident(ident, Query::All).count() > 0 {
+                            return if defs
+                                .words
+                                .entries_by_ident(ident, StateQuery::all())
+                                .count()
+                                > 0
+                            {
                                 Err(node.span.sp(ResolutionError::IncompatibleWord {
                                     ident: ident.clone(),
                                     input_sig: sig.clone(),
@@ -332,13 +338,13 @@ pub fn resolve_sequence(
                     } else {
                         let mut hashes: Vec<_> = defs
                             .words
-                            .entries_by_ident(ident, Query::All)
+                            .entries_by_ident(ident, StateQuery::all())
                             .map(|(hash, _)| hash)
                             .collect();
                         if hashes.len() > 1 {
                             hashes = defs
                                 .words
-                                .entries_by_ident(ident, Query::Pending)
+                                .entries_by_ident(ident, StateQuery::PENDING)
                                 .map(|(hash, _)| hash)
                                 .collect()
                         }
@@ -357,7 +363,7 @@ pub fn resolve_sequence(
                     let hash = node.span.sp(hash);
                     let word = defs
                         .words
-                        .entry_by_hash(&hash, Query::All)
+                        .entry_by_hash(&hash, StateQuery::all())
                         .expect("word that was already found isn't present")
                         .item;
                     compose!(node.span.sp(word.sig.clone()))
@@ -473,7 +479,7 @@ fn resolve_concrete_type(
             ident,
             params: type_params,
         } => {
-            if let Some((_, alias)) = defs.types.entries_by_ident(ident, Query::All).next() {
+            if let Some((_, alias)) = defs.types.entries_by_ident(ident, StateQuery::all()).next() {
                 if alias.item.params.len() != type_params.len() {
                     let error_span = if type_params.len() == 0 {
                         ident.span
