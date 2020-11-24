@@ -377,7 +377,13 @@ impl Codebase {
                         if let WordKind::Uiua(nodes) = &entry.item.kind {
                             colored::control::set_override(false);
                             let s = format!(
-                                ": {} {} = {}",
+                                "{}: {} {} = {}",
+                                entry
+                                    .item
+                                    .doc
+                                    .lines()
+                                    .map(|line| format!("`` {}\n", line))
+                                    .collect::<String>(),
                                 ident.name,
                                 entry.item.sig,
                                 Node::format(nodes, &ident.name, &self.defs.words)
@@ -391,9 +397,16 @@ impl Codebase {
                     }
                     AnyItemEntry::Type(entry) => {
                         colored::control::set_override(false);
+                        let doc = entry
+                            .item
+                            .doc
+                            .lines()
+                            .map(|line| format!("`` {}\n", line))
+                            .collect::<String>();
                         let s = match &entry.item.kind {
                             TypeAliasKind::Enum(variants) => format!(
-                                "data {} {}= {}",
+                                "{}data {} {}= {}",
+                                doc,
                                 entry.item.name,
                                 if entry.item.params.is_empty() {
                                     String::new()
@@ -406,7 +419,8 @@ impl Codebase {
                                     .collect::<String>(),
                             ),
                             TypeAliasKind::Record(fields) => format!(
-                                "data {} {}=\n{}",
+                                "{}data {} {}=\n{}",
+                                doc,
                                 entry.item.name,
                                 if entry.item.params.is_empty() {
                                     String::new()

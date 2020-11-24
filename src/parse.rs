@@ -411,14 +411,18 @@ where
     }
     /// Match an item
     fn item(&mut self) -> Result<Option<UnresItem>, ParseError> {
+        // Consume unhashed
+        if self.unhashed().is_some() {
+            return Ok(None);
+        }
+        // Collect doc comments
         let mut doc = String::new();
         while let Some(comment) = self.try_mat(TT::doc_comment) {
             doc += &comment;
             doc += "\n";
         }
-        if self.unhashed().is_some() {
-            return Ok(None);
-        } else if let Some(colon) = self.try_mat(TT::Colon) {
+        // Main match
+        if let Some(colon) = self.try_mat(TT::Colon) {
             let purpose = self.mat("name", TT::ident)?.map(WordPurpose::Regular);
             self.word(doc, colon, purpose).map(UnresItem::Word)
         } else if let Some(colon) = self.try_mat(TT::TestColon) {
