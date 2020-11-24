@@ -212,6 +212,12 @@ impl BuiltinWord {
             BuiltinWord::OptionIsNone => Ident::module("option", "is_none"),
         }
     }
+    pub fn aliases(&self) -> Vec<Ident> {
+        match self {
+            BuiltinWord::ListPushBack => vec![Ident::module("list", ",")],
+            _ => Vec::new(),
+        }
+    }
     pub fn run_fn(&self, _sig: &Signature) -> StackFn {
         match self {
             BuiltinWord::Pop => Box::new(|stack| {

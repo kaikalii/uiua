@@ -39,22 +39,26 @@ impl Codebase {
         // Create builtin entries
         let top_dir = Arc::new(dir.as_ref().to_path_buf());
         let mut defs = Defs::new(&top_dir)?;
-        // Words
+        // Add builtin words
         for biw in BuiltinWord::ALL_SIMPLE
             .iter()
             .cloned()
             .chain(BuiltinWord::all_complex())
         {
             let ident = biw.ident();
+            let aliases = biw.aliases();
             let word = Word::from(biw);
             let hash = word.hash_finish(&defs.words);
             ItemEntry {
+                names: once(ident.clone()).chain(aliases.clone()).collect(),
                 item: word,
-                names: once(ident.clone()).collect(),
                 source: ItemSource::Saved,
             }
             .save(&hash, dir.as_ref(), None)?;
             defs.words.names.0.entry(ident).or_default().insert(hash);
+            for alias in aliases {
+                defs.words.names.0.entry(alias).or_default().insert(hash);
+            }
         }
         // Make codebase
         let cb = Arc::new(Mutex::new(Codebase {
