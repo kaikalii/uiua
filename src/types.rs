@@ -236,7 +236,9 @@ impl Ord for Generic {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypeAlias {
+    pub doc: String,
     pub name: String,
+    pub kind: TypeAliasKind,
     pub params: TypeParams,
     pub unique: bool,
     pub ty: Type,
@@ -274,6 +276,24 @@ impl TreeHash for TypeAlias {
 impl fmt::Display for TypeAlias {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}{{{}}}", self.name, self.params)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TypeAliasKind {
+    Enum(Vec<String>),
+    Record(Vec<Field>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Field {
+    pub name: String,
+    pub ty: Type,
+}
+
+impl fmt::Display for Field {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.ty)
     }
 }
 
@@ -411,6 +431,7 @@ impl fmt::Display for Primitive {
 #[derive(Debug, Clone)]
 pub struct UnresTypeAlias {
     pub name: Sp<String>,
+    pub doc: String,
     pub unique: bool,
     pub kind: Sp<UnresTypeAliasKind>,
 }

@@ -2,14 +2,14 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
 
 use colored::*;
 
-use crate::{ast::*, codebase::*};
+use crate::{ast::*, codebase::*, types::*};
 
 impl Codebase {
     pub fn add(&mut self) {
@@ -18,87 +18,14 @@ impl Codebase {
             if comp.errors.is_empty() {
                 let mut failures = 0;
                 // Add words
-                let mut words_added = 0;
-                let mut words_deleted = 0;
-                let mut hashes_to_purge = Vec::new();
-                for (hash, entry) in &self.defs.words.entries {
-                    // Handle if there is an existing word in the codebase with the same name and signature
-                    let old_to_delete = if let Some(old_hash) =
-                        self.defs.words.joint_entry(hash, entry, StateQuery::SAVED)
-                    {
-                        hashes_to_purge.push(old_hash);
-                        if self.defs.words.hash_is_referenced(&old_hash) {
-                            None
-                        } else {
-                            words_deleted += 1;
-                            Some(old_hash)
-                        }
-                    } else {
-                        None
-                    };
-                    // Save the entry file
-                    if let Err(e) = entry.save(hash, &self.top_dir, old_to_delete) {
-                        println!("{} adding word: {}", "Error".bright_red(), e);
-                        failures += 1;
-                    } else {
-                        words_added += 1;
-                    }
-                    // Update names index
-                    for ident in &entry.names {
-                        self.defs
-                            .words
-                            .names
-                            .0
-                            .entry(ident.clone())
-                            .or_default()
-                            .insert(*hash);
-                    }
-                }
-                for hash in &hashes_to_purge {
-                    self.defs.words.names.purge_hash(hash);
-                }
-                // Report
-                // Added words
-                if words_added > 0 {
-                    println!(
-                        "{}",
-                        format!(
-                            "Added {} word{}",
-                            words_added,
-                            if words_added == 1 { "" } else { "s" }
-                        )
-                        .bright_green()
-                    );
-                    // Update names
-                    if let Err(e) = self.defs.words.names.save(&self.top_dir) {
-                        println!("{} {}", "Error updating name index:".bright_red(), e);
-                    }
-                }
-                // Dereferenced words
-                let words_dereferenced = hashes_to_purge.len() - words_deleted;
-                if words_dereferenced > 0 {
-                    println!(
-                        "{}",
-                        format!(
-                            "Dereferenced {} word{}",
-                            words_dereferenced,
-                            if words_dereferenced == 1 { "" } else { "s" }
-                        )
-                        .green()
-                    );
-                }
-                // Removed words
-                if words_deleted > 0 {
-                    println!(
-                        "{}",
-                        format!(
-                            "Deleted {} unreferenced word{}",
-                            words_deleted,
-                            if words_deleted == 1 { "" } else { "s" }
-                        )
-                        .green()
-                    );
-                }
+                let (words_added, word_failures) =
+                    add_item(&mut self.defs.words, &self.top_dir, "word");
+                failures += word_failures;
+                // Add types
+                let (types_added, type_failures) =
+                    add_item(&mut self.defs.types, &self.top_dir, "type");
+                failures += type_failures;
+
                 // Failures
                 if failures > 0 {
                     println!(
@@ -106,7 +33,7 @@ impl Codebase {
                         format!("{} items failed to be added", failures).bright_red()
                     );
                 }
-                if failures == 0 && words_added == 0 {
+                if failures == 0 && words_added == 0 && types_added != 0 {
                     println!("Nothing added");
                 }
                 self.defs.reset();
@@ -118,6 +45,92 @@ impl Codebase {
         }
         println!();
     }
+}
+
+/// Returns (items_added, failures)
+fn add_item<T>(defs: &mut ItemDefs<T>, top_dir: &Path, item_str: &str) -> (usize, usize)
+where
+    T: CodebaseItem,
+{
+    let mut added = 0;
+    let mut deleted = 0;
+    let mut failures = 0;
+    let mut hashes_to_purge = Vec::new();
+    for (hash, entry) in &defs.entries {
+        // Handle if there is an existing item in the codebase with the same name and signature
+        let old_to_delete = if let Some(old_hash) = defs.joint_entry(hash, entry, StateQuery::SAVED)
+        {
+            hashes_to_purge.push(old_hash);
+            if defs.hash_is_referenced(&old_hash) {
+                None
+            } else {
+                deleted += 1;
+                Some(old_hash)
+            }
+        } else {
+            None
+        };
+        // Save the entry file
+        if let Err(e) = entry.save(hash, top_dir, old_to_delete) {
+            println!("{} adding {}: {}", "Error".bright_red(), item_str, e);
+            failures += 1;
+        } else {
+            added += 1;
+        }
+        // Update names index
+        for ident in &entry.names {
+            defs.names.0.entry(ident.clone()).or_default().insert(*hash);
+        }
+    }
+    for hash in &hashes_to_purge {
+        defs.names.purge_hash(hash);
+    }
+    // Report
+    // Added
+    if added > 0 {
+        println!(
+            "{}",
+            format!(
+                "Added {} {}{}",
+                added,
+                item_str,
+                if added == 1 { "" } else { "s" }
+            )
+            .bright_green()
+        );
+        // Update names
+        if let Err(e) = defs.names.save(top_dir) {
+            println!("{} {}", "Error updating name index:".bright_red(), e);
+        }
+    }
+    // Dereferenced
+    let dereferenced = hashes_to_purge.len() - deleted;
+    if dereferenced > 0 {
+        println!(
+            "{}",
+            format!(
+                "Dereferenced {} {}{}",
+                dereferenced,
+                item_str,
+                if dereferenced == 1 { "" } else { "s" }
+            )
+            .green()
+        );
+    }
+    // Removed
+    if deleted > 0 {
+        println!(
+            "{}",
+            format!(
+                "Deleted {} unreferenced {}{}",
+                deleted,
+                item_str,
+                if deleted == 1 { "" } else { "s" }
+            )
+            .green()
+        );
+    }
+    (added, failures)
 }
 
 #[derive(Debug)]
@@ -151,7 +164,7 @@ impl Codebase {
                     println!("Invalid path");
                     return;
                 }
-            } else if self.defs.words.names.0.iter().any(|(ident, _)| {
+            } else if self.defs.all_names(ItemQuery::all()).any(|ident| {
                 ident
                     .module
                     .as_ref()
@@ -182,10 +195,10 @@ impl Codebase {
         // Words
         if query.contains(ItemQuery::WORD) {
             let mut word_data: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
-            match iom {
+            match &iom {
                 IdentOrModule::Module(path) => {
                     for (ident, hashes) in &self.defs.words.names.0 {
-                        if path == ident.module {
+                        if path == &ident.module {
                             for hash in hashes {
                                 let entry = self
                                     .defs
@@ -214,8 +227,46 @@ impl Codebase {
             }
             self.print_word_data(word_data, &mut track_i);
         }
+        // Types
+        if query.contains(ItemQuery::TYPE) {
+            let mut type_data = BTreeSet::new();
+            match &iom {
+                IdentOrModule::Module(path) => {
+                    for (ident, hashes) in &self.defs.types.names.0 {
+                        if path == &ident.module {
+                            for hash in hashes {
+                                let entry = self
+                                    .defs
+                                    .types
+                                    .entry_by_hash(hash, StateQuery::SAVED)
+                                    .expect("name refers to invalid hash");
+                                type_data.insert((ident.clone(), entry.item.doc.clone()));
+                            }
+                        }
+                    }
+                }
+                IdentOrModule::Ident(ident) => {
+                    for (_, entry) in self.defs.types.entries_by_ident(&ident, StateQuery::SAVED) {
+                        type_data.insert((ident.clone(), entry.item.doc.clone()));
+                    }
+                }
+            }
+            if !type_data.is_empty() {
+                println!("{}", "Types".bright_white().bold());
+            }
+            self.print_type_data(type_data, &mut track_i);
+        }
         println!();
     }
+}
+
+const MODULE_COLOR: Color = Color::TrueColor {
+    r: 128,
+    g: 127,
+    b: 140,
+};
+
+impl Codebase {
     fn print_word_data(
         &self,
         word_data: BTreeMap<(Ident, String), BTreeSet<String>>,
@@ -226,13 +277,8 @@ impl Codebase {
             .map(|((ident, _), _)| ident.to_string().len())
             .max()
             .unwrap_or(0);
-        let module_color = Color::TrueColor {
-            r: 128,
-            g: 127,
-            b: 140,
-        };
         let pad_diff =
-            "".bright_white().bold().to_string().len() + "".color(module_color).to_string().len();
+            "".bright_white().bold().to_string().len() + "".color(MODULE_COLOR).to_string().len();
         for ((ident, doc), sigs) in word_data {
             for line in doc.lines() {
                 println!("     {}", line.trim().bright_black());
@@ -248,13 +294,44 @@ impl Codebase {
                         } else {
                             String::new()
                         }
-                        .color(module_color),
+                        .color(MODULE_COLOR),
                         ident.name.bright_white().bold()
                     ),
                     sig,
                     pad = max_ident_len + pad_diff
                 );
+                *track_i += 1;
             }
+        }
+    }
+    fn print_type_data(&self, type_data: BTreeSet<(Ident, String)>, track_i: &mut usize) {
+        let max_ident_len = type_data
+            .iter()
+            .map(|(ident, _)| ident.to_string().len())
+            .max()
+            .unwrap_or(0);
+        let pad_diff =
+            "".bright_white().bold().to_string().len() + "".color(MODULE_COLOR).to_string().len();
+        for (ident, doc) in type_data {
+            for line in doc.lines() {
+                println!("     {}", line.trim().bright_black());
+            }
+            println!(
+                "{:>3}. {} {:pad$}",
+                track_i,
+                "type".magenta(),
+                format!(
+                    "{}{}",
+                    if let Some(m) = &ident.module {
+                        format!("{}.", m)
+                    } else {
+                        String::new()
+                    }
+                    .color(MODULE_COLOR),
+                    ident.name.bright_white().bold()
+                ),
+                pad = max_ident_len + pad_diff
+            );
             *track_i += 1;
         }
     }
@@ -276,39 +353,75 @@ impl Codebase {
             if ident.module.is_none() {
                 ident.module = self.path.clone();
             }
-            let word_entries: Vec<_> = self
+            let entries: Vec<_> = self
                 .defs
-                .words
-                .entries_by_ident(&ident, StateQuery::SAVED)
+                .entries_by_ident(&ident, ItemQuery::all(), StateQuery::SAVED)
                 .collect();
             let index = if let Some(index) = index {
                 index.saturating_sub(1)
-            } else if word_entries.len() > 1 {
+            } else if entries.len() > 1 {
                 println!("\nMultiple applicable words. Please choose one:");
                 self.ls(Some(ident.to_string()), ItemQuery::WORD);
                 return Ok(());
             } else {
                 0
             };
-            if let Some((_, entry)) = word_entries.get(index) {
+            if let Some((_, entry)) = entries.get(index) {
                 if let Some(module) = &ident.module {
                     self.cd(module);
                 } else {
                     self.cd(".");
                 }
-                if let WordKind::Uiua(nodes) = &entry.item.kind {
-                    colored::control::set_override(false);
-                    let s = format!(
-                        ": {} {} = {}",
-                        ident.name,
-                        entry.item.sig,
-                        Node::format(nodes, &ident.name, &self.defs.words)
-                    );
-                    colored::control::set_override(true);
-                    s
-                } else {
-                    println!("\nCannot edit built-in words");
-                    return Ok(());
+                match entry {
+                    AnyItemEntry::Word(entry) => {
+                        if let WordKind::Uiua(nodes) = &entry.item.kind {
+                            colored::control::set_override(false);
+                            let s = format!(
+                                ": {} {} = {}",
+                                ident.name,
+                                entry.item.sig,
+                                Node::format(nodes, &ident.name, &self.defs.words)
+                            );
+                            colored::control::set_override(true);
+                            s
+                        } else {
+                            println!("\nCannot edit built-in words");
+                            return Ok(());
+                        }
+                    }
+                    AnyItemEntry::Type(entry) => {
+                        colored::control::set_override(false);
+                        let s = match &entry.item.kind {
+                            TypeAliasKind::Enum(variants) => format!(
+                                "data {} {}= {}",
+                                entry.item.name,
+                                if entry.item.params.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("{} ", entry.item.params)
+                                },
+                                variants
+                                    .iter()
+                                    .map(|var| format!("{} ", var))
+                                    .collect::<String>(),
+                            ),
+                            TypeAliasKind::Record(fields) => format!(
+                                "data {} {}=\n{}",
+                                entry.item.name,
+                                if entry.item.params.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("{} ", entry.item.params)
+                                },
+                                fields
+                                    .iter()
+                                    .map(|field| format!("\t{}\n", field))
+                                    .collect::<String>()
+                            ),
+                        };
+                        colored::control::set_override(true);
+                        s
+                    }
                 }
             } else {
                 println!("\nUnknown item \"{}\"", ident);

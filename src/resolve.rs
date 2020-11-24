@@ -143,8 +143,10 @@ pub fn resolve_type_alias(
         UnresTypeAliasKind::Enum(variants) => {
             let res_alias = TypeAlias {
                 name: alias.name.data.clone(),
+                kind: TypeAliasKind::Enum(variants.iter().map(|name| name.data.clone()).collect()),
                 params: Default::default(),
                 unique: alias.unique,
+                doc: alias.doc.clone(),
                 ty: Primitive::Nat.into(),
             };
             let prim_ty = Type::Alias(Box::new(res_alias.clone()));
@@ -165,13 +167,16 @@ pub fn resolve_type_alias(
             (res_alias, words)
         }
         UnresTypeAliasKind::Record { params, fields } => {
-            let fields: Vec<(String, Type)> = fields
+            let fields: Vec<Field> = fields
                 .iter()
                 .map(|field| {
-                    resolve_type(&field.ty, defs, params).map(|ty| (field.name.data.clone(), ty))
+                    resolve_type(&field.ty, defs, params).map(|ty| Field {
+                        name: field.name.data.clone(),
+                        ty,
+                    })
                 })
                 .collect::<Result<_, _>>()?;
-            let field_types: Vec<Type> = fields.iter().map(|(_, ty)| ty.clone()).collect();
+            let field_types: Vec<Type> = fields.iter().map(|field| field.ty.clone()).collect();
             let res_alias = TypeAlias {
                 params: TypeParams(
                     params
@@ -182,7 +187,9 @@ pub fn resolve_type_alias(
                         })
                         .collect(),
                 ),
+                kind: TypeAliasKind::Record(fields.clone()),
                 unique: alias.unique,
+                doc: alias.doc.clone(),
                 name: alias.name.data.clone(),
                 ty: Primitive::Tuple(field_types.clone()).into(),
             };
@@ -197,7 +204,7 @@ pub fn resolve_type_alias(
                         alias.name.data,
                         fields
                             .iter()
-                            .map(|(name, _)| name.as_str())
+                            .map(|field| field.name.as_str())
                             .intersperse(", ")
                             .collect::<String>()
                     ),
@@ -206,28 +213,28 @@ pub fn resolve_type_alias(
                 },
             )];
             // Getters and Setters
-            words.extend(fields.into_iter().enumerate().flat_map(|(i, (name, ty))| {
+            words.extend(fields.into_iter().enumerate().flat_map(|(i, field)| {
                 // Getters
                 once((
-                    format!("{}>>", name),
+                    format!("{}>>", field.name),
                     Word {
-                        doc: format!("Push the top {}'s {} value", alias.name.data, name),
+                        doc: format!("Push the top {}'s {} value", alias.name.data, field.name),
                         sig: Signature::new(
                             vec![prim_ty.clone()],
-                            vec![prim_ty.clone(), ty.clone()],
+                            vec![prim_ty.clone(), field.ty.clone()],
                         ),
                         kind: WordKind::Builtin(BuiltinWord::TupleGet(fields_len as u8, i as u8)),
                     },
                 ))
                 // Setters
                 .chain(once((
-                    format!(">>{}", name),
+                    format!(">>{}", field.name),
                     Word {
                         doc: format!(
                             "Pop the top value and set the underlying {}'s {} value",
-                            alias.name.data, name
+                            alias.name.data, field.name
                         ),
-                        sig: Signature::new(vec![prim_ty.clone(), ty], vec![prim_ty.clone()]),
+                        sig: Signature::new(vec![prim_ty.clone(), field.ty], vec![prim_ty.clone()]),
                         kind: WordKind::Builtin(BuiltinWord::TupleGet(fields_len as u8, i as u8)),
                     },
                 )))
@@ -393,7 +400,9 @@ pub fn resolve_sequence(
                     .map(|ty| resolve_type(ty, defs, type_params))
                     .collect::<Result<Vec<_>, _>>()?;
                 let node_sig = Signature::new(types.clone(), types.clone());
-                compose!(node.span.sp(node_sig)).map_err(|e| node.span.sp(e.with_hint(types)))?;
+                compose!(node.span.sp(node_sig))
+                    .map_err(|e| node.span.sp(e.with_hint(types.clone())))?;
+                resolved_nodes.push(node.span.sp(Node::TypeHint(types)));
             }
             UnresNode::Unhashed(s) => resolved_nodes.push(node.span.sp(Node::Unhashed(s.clone()))),
         }

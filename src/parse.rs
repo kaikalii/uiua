@@ -352,7 +352,7 @@ where
         }))
     }
     /// Match a data type alias
-    fn data(&mut self, data_token: Sp<()>) -> Result<Sp<UnresTypeAlias>, ParseError> {
+    fn data(&mut self, doc: String, data_token: Sp<()>) -> Result<Sp<UnresTypeAlias>, ParseError> {
         let start = data_token.span.start;
         // Match the name
         let name = self.mat("name", TT::ident)?;
@@ -384,6 +384,7 @@ where
             }
             Span::new(start, self.loc).sp(UnresTypeAlias {
                 name,
+                doc,
                 unique: true,
                 kind: Span::new(kind_start, self.loc)
                     .sp(UnresTypeAliasKind::Record { params, fields }),
@@ -402,6 +403,7 @@ where
             }
             Span::new(start, self.loc).sp(UnresTypeAlias {
                 name,
+                doc,
                 unique: true,
                 kind: Span::new(kind_start, self.loc).sp(UnresTypeAliasKind::Enum(variants)),
             })
@@ -432,7 +434,7 @@ where
             }
             Ok(UnresItem::Use(module))
         } else if let Some(data_token) = self.try_mat(TT::Data) {
-            self.data(data_token).map(UnresItem::Type)
+            self.data(doc, data_token).map(UnresItem::Type)
         } else if let Some(token) = self.next_token().transpose()? {
             Err(ParseErrorKind::ExpectedFoundTT {
                 expected: "':', 'type', 'use', or comment".into(),

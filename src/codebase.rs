@@ -252,6 +252,49 @@ impl Defs {
         self.words.reset();
         self.types.reset();
     }
+    pub fn entries_by_ident(
+        &self,
+        ident: &Ident,
+        item_query: ItemQuery,
+        state_query: StateQuery,
+    ) -> impl Iterator<Item = (Hash, AnyItemEntry)> + '_ {
+        let words = if item_query.contains(ItemQuery::WORD) {
+            Some(self.words.entries_by_ident(ident, state_query))
+        } else {
+            None
+        };
+        let types = if item_query.contains(ItemQuery::TYPE) {
+            Some(self.types.entries_by_ident(ident, state_query))
+        } else {
+            None
+        };
+        words
+            .into_iter()
+            .flatten()
+            .map(|(hash, entry)| (hash, AnyItemEntry::Word(entry)))
+            .chain(
+                types
+                    .into_iter()
+                    .flatten()
+                    .map(|(hash, entry)| (hash, AnyItemEntry::Type(entry))),
+            )
+    }
+    pub fn all_names(&self, item_query: ItemQuery) -> impl Iterator<Item = &Ident> {
+        let words = if item_query.contains(ItemQuery::WORD) {
+            Some(self.words.names.0.keys())
+        } else {
+            None
+        };
+        let types = if item_query.contains(ItemQuery::WORD) {
+            Some(self.types.names.0.keys())
+        } else {
+            None
+        };
+        words
+            .into_iter()
+            .flatten()
+            .chain(types.into_iter().flatten())
+    }
 }
 
 pub trait CodebaseItem:
@@ -263,6 +306,7 @@ pub trait CodebaseItem:
     const FOLDER: &'static str;
     fn joinable(&self) -> &Self::Joinable;
     fn items(defs: &Defs) -> &ItemDefs<Self>;
+    fn references_hash(&self, hash: &Hash) -> bool;
     fn hash_finish(&self, _: &ItemDefs<Self>) -> Hash {
         let mut sha = Sha3_256::default();
         self.hash(&mut sha);
@@ -339,6 +383,13 @@ impl CodebaseItem for Word {
         self.hash(&mut sha);
         Hash(sha.finalize())
     }
+    fn references_hash(&self, hash: &Hash) -> bool {
+        if let WordKind::Uiua(nodes) = &self.kind {
+            nodes.iter().any(|node| node.references_hash(hash))
+        } else {
+            false
+        }
+    }
 }
 
 impl CodebaseItem for TypeAlias {
@@ -349,6 +400,9 @@ impl CodebaseItem for TypeAlias {
     }
     fn items(defs: &Defs) -> &ItemDefs<Self> {
         &defs.types
+    }
+    fn references_hash(&self, _hash: &Hash) -> bool {
+        false
     }
 }
 
@@ -592,6 +646,15 @@ where
                 .find(|h| h != hash)
         })
     }
+    pub fn hash_is_referenced(&self, hash: &Hash) -> bool {
+        if let Ok(entries) = Word::get_entries(&self.top_dir) {
+            entries
+                .values()
+                .any(|entry| entry.item.references_hash(hash))
+        } else {
+            false
+        }
+    }
 }
 
 impl ItemDefs<Word> {
@@ -605,15 +668,6 @@ impl ItemDefs<Word> {
             .filter(move |(_, entry)| sig.compose(&entry.item.sig).is_ok())
             .map(|(hash, entry)| (hash, entry.item))
             .collect()
-    }
-    pub fn hash_is_referenced(&self, hash: &Hash) -> bool {
-        if let Ok(entries) = Word::get_entries(&self.top_dir) {
-            entries
-                .values()
-                .any(|entry| entry.item.references_hash(hash))
-        } else {
-            false
-        }
     }
 }
 

@@ -107,16 +107,6 @@ impl From<BuiltinWord> for Word {
     }
 }
 
-impl Word {
-    pub fn references_hash(&self, hash: &Hash) -> bool {
-        if let WordKind::Uiua(nodes) = &self.kind {
-            nodes.iter().any(|node| node.references_hash(hash))
-        } else {
-            false
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum WordKind {
