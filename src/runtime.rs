@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::{collections::VecDeque, convert::identity, mem::*, rc::Rc};
+use std::{collections::VecDeque, convert::identity, fmt, mem::*, rc::Rc};
 
 use crate::{ast::*, codebase::*, types::*};
 
@@ -43,6 +43,16 @@ pub enum Instruction {
     Return,
 }
 
+impl fmt::Debug for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Instruction::Execute(_) => write!(f, "execute"),
+            Instruction::Jump(i) => write!(f, "jump {}", i),
+            Instruction::Return => write!(f, "return"),
+        }
+    }
+}
+
 pub fn run(word: Word, defs: &Defs) {
     let mut nodes = if let WordKind::Uiua(nodes) = word.kind {
         nodes
@@ -75,6 +85,7 @@ pub fn run(word: Word, defs: &Defs) {
                             running_sig = running_sig.compose(&word.sig).unwrap();
                             nodes.retain(Node::does_something);
                             instrs.push(Instruction::Jump(next_word_start));
+                            println!("word ident jumps to {}", next_word_start);
                             next_word_start += nodes.len() + 1;
                             node_queue.push_back((running_sig.clone(), word.sig, nodes));
                         }
@@ -100,7 +111,8 @@ pub fn run(word: Word, defs: &Defs) {
                     instrs.push(Instruction::Execute(f));
                 }
                 Node::SelfIdent => {
-                    instrs.push(Instruction::Jump(word_start));
+                    println!("self ident jumps to {}", word_start);
+                    instrs.push(Instruction::Jump(word_start + 1));
                     running_sig = running_sig.compose(&word_sig).unwrap();
                 }
                 Node::Quotation { sig, mut nodes } => {
@@ -118,6 +130,9 @@ pub fn run(word: Word, defs: &Defs) {
         }
         instrs.push(Instruction::Return);
         word_start += seq_len;
+    }
+    for (i, instr) in instrs.iter().enumerate() {
+        println!("{}: {:?}", i, instr);
     }
     while stack.i < instrs.len() {
         match &instrs[stack.i] {
